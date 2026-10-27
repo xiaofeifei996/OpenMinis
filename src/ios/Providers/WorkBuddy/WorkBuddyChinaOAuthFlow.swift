@@ -116,6 +116,61 @@ enum WorkBuddyChinaOAuthFlow {
     }
 
     /// Open the authorization URL using the system browser.
+    struct Account: Sendable {
+        let userID: String
+        let nickname: String?
+        let phoneNumber: String?
+        let domain: String?
+    }
+
+    /// Waits for the browser login to be approved and retrieves the account
+    /// identity needed by WorkBuddy's request headers.
+    static func pollAccount(
+        for login: LoginState,
+        accessToken: String,
+        domain: String?,
+        timeout: TimeInterval = signInTimeout,
+        session: URLSession = .shared,
+        onPending: (() -> Void)? = nil
+    ) async throws -> Account {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            try await Task.sleep(nanoseconds: 2_000_000_000)
+            try Task.checkCancellation()
+            do {
+                var headers = [
+                    "Authorization": "Bearer \\(accessToken)",
+                    "X-No-User-Id": "true",
+                    "X-No-Enterprise-Id": "true"
+                ]
+                headers["X-Domain"] = domain ?? endpoint.host
+                let payload = try await requestJSON(
+                    path: "/v2/plugin/login/account?state=\\(login.state.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? login.state)",
+                    method: "GET",
+                    headers: headers,
+                    body: nil,
+                    session: session
+                )
+                guard let uid = payload["uid"] as? String, !uid.isEmpty else {
+                    throw FlowError.invalidResponse
+                }
+                return Account(
+                    userID: uid,
+                    nickname: payload["nickname"] as? String,
+                    phoneNumber: payload["phoneNumber"] as? String,
+                    domain: payload["domain"] as? String ?? domain
+                )
+            } catch let error as FlowError {
+                if case .server(let code, _) = error, code == 12151 {
+                    onPending?()
+                    continue
+                }
+                throw error
+            }
+        }
+        throw FlowError.timeout
+    }
+
     @MainActor
     static func openAuthorizationPage(_ login: LoginState) {
         UIApplication.shared.open(login.authorizationURL)

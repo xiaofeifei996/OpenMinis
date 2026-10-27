@@ -77,7 +77,12 @@ final class WorkBuddyChinaOAuthManager {
         let domain = ProviderKeychainHelper.loadOAuthString(
             instanceId: instanceId, account: "workbuddy-domain"
         )
-        let token = try await WorkBuddyChinaOAuthFlow.refreshToken(refresh, domain: domain)
+        let enterpriseID = ProviderKeychainHelper.loadOAuthString(
+            instanceId: instanceId, account: "workbuddy-enterprise-id"
+        )
+        let token = try await WorkBuddyChinaOAuthFlow.refreshToken(
+            refresh, domain: domain, enterpriseID: enterpriseID
+        )
 
         guard !token.accessToken.isEmpty else {
             throw WorkBuddyChinaOAuthFlow.FlowError.missingToken

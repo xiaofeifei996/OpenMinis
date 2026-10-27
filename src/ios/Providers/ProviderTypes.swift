@@ -113,7 +113,20 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         // (`model_picker_enabled`), never a compiled-in guess that would go
         // stale and offer models the account cannot use.
         case .githubCopilot: return []
-        case .workBuddyChina: return []
+        // WorkBuddy's upstream catalog confirms "auto" as the default model.
+        // Keep this fallback intentionally minimal until account-scoped /v3/config
+        // discovery is implemented; don't advertise speculative model IDs.
+        case .workBuddyChina:
+            return [
+                LLMModel(
+                    id: "auto",
+                    displayName: "Auto",
+                    provider: "WorkBuddy 中国版",
+                    modalityOverride: .textOnly,
+                    contextWindow: 168_000,
+                    supportsReasoning: false
+                )
+            ]
         case .unsupported: return []
         }
     }

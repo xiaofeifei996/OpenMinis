@@ -42,3 +42,30 @@ jobs:
             echo "Parsing $file"
             swiftc -frontend -parse "$file"
           done
+
+  ios-simulator-build:
+    name: Build iOS app for Simulator
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode
+        run: |
+          xcodebuild -version
+          xcodebuild -list -project src/ios/Minis.xcodeproj
+
+      - name: Build Minis for iOS Simulator
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project src/ios/Minis.xcodeproj \
+            -scheme Minis \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build

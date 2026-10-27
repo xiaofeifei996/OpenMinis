@@ -20,7 +20,9 @@ enum WorkBuddyChinaOAuthFlow {
         let accessToken: String
         let refreshToken: String?
         let expiresIn: Int?
+        let expiresAt: Double?
         let refreshExpiresIn: Int?
+        let refreshExpiresAt: Double?
         let domain: String?
         let tokenType: String?
     }
@@ -99,8 +101,10 @@ enum WorkBuddyChinaOAuthFlow {
                 return Token(
                     accessToken: access,
                     refreshToken: payload["refreshToken"] as? String,
-                    expiresIn: payload["expiresIn"] as? Int,
-                    refreshExpiresIn: payload["refreshExpiresIn"] as? Int,
+                    expiresIn: Self.seconds(payload["expiresIn"]),
+                    expiresAt: Self.timestamp(payload["expiresAt"]),
+                    refreshExpiresIn: Self.seconds(payload["refreshExpiresIn"]),
+                    refreshExpiresAt: Self.timestamp(payload["refreshExpiresAt"]),
                     domain: payload["domain"] as? String,
                     tokenType: payload["tokenType"] as? String
                 )
@@ -198,8 +202,10 @@ enum WorkBuddyChinaOAuthFlow {
         return Token(
             accessToken: access,
             refreshToken: payload["refreshToken"] as? String,
-            expiresIn: payload["expiresIn"] as? Int,
-            refreshExpiresIn: payload["refreshExpiresIn"] as? Int,
+            expiresIn: Self.seconds(payload["expiresIn"]),
+            expiresAt: Self.timestamp(payload["expiresAt"]),
+            refreshExpiresIn: Self.seconds(payload["refreshExpiresIn"]),
+            refreshExpiresAt: Self.timestamp(payload["refreshExpiresAt"]),
             domain: payload["domain"] as? String ?? domain,
             tokenType: payload["tokenType"] as? String
         )
@@ -208,6 +214,27 @@ enum WorkBuddyChinaOAuthFlow {
     @MainActor
     static func openAuthorizationPage(_ login: LoginState) {
         UIApplication.shared.open(login.authorizationURL)
+    }
+
+    /// WorkBuddy may return lifetimes in seconds or absolute expiry timestamps.
+    /// Normalize absolute millisecond timestamps before persisting them.
+    private static func seconds(_ value: Any?) -> Int? {
+        guard let number = numericValue(value), number > 0 else { return nil }
+        if number > 1_000_000_000_000 {
+            return max(0, Int(number / 1000 - Date().timeIntervalSince1970))
+        }
+        return Int(number)
+    }
+
+    private static func timestamp(_ value: Any?) -> Double? {
+        guard let number = numericValue(value), number > 0 else { return nil }
+        return number > 1_000_000_000_000 ? number / 1000 : number
+    }
+
+    private static func numericValue(_ value: Any?) -> Double? {
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let string = value as? String { return Double(string) }
+        return nil
     }
 
     private static func requestJSON(

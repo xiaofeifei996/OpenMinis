@@ -78,6 +78,8 @@ enum LLMProviderFactory {
             return openCode(makeKimiProvider(instance: instance, model: entry.model))
         case .githubCopilot:
             return openCode(makeCopilotProvider(instance: instance, model: entry.model))
+        case .workBuddyChina:
+            return openCode(makeWorkBuddyChinaProvider(instance: instance, model: entry.model))
         case .unsupported:
             throw FactoryError.voiceOnlyProvider
         }
@@ -362,6 +364,33 @@ enum LLMProviderFactory {
     /// body, which is the first point that knows whether this turn is
     /// agent-driven and whether images are attached. Before this, the per-request
     /// headers were computed by a function nothing called, so they never shipped.
+    /// Tencent WorkBuddy China uses an OpenAI-compatible streaming endpoint.
+    /// The endpoint already contains /v2, so /v1 must not be appended.
+    /// OAuth login and account-bound headers are handled separately; this
+    /// builder also honors a manually supplied bearer token for testing.
+    static func makeWorkBuddyChinaProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
+        let baseURL = instance.effectiveCustomBaseURL ?? "https://copilot.tencent.com/v2"
+        let token: String
+        if instance.credentialType == .oauth,
+           let manualToken = ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") {
+            token = manualToken
+        } else {
+            token = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) ?? ""
+        }
+        let provider = OpenAIProvider(apiKey: token, model: model, customBaseURL: baseURL, appendV1Suffix: false)
+        provider.extraHeaders.merge([
+            "User-Agent": "WorkBuddy/5.5.6",
+            "X-Product": "SaaS",
+            "X-IDE-Type": "WorkBuddy",
+            "X-IDE-Name": "WorkBuddy",
+            "X-IDE-Version": "5.5.6",
+            "X-Requested-With": "XMLHttpRequest",
+            "X-Agent-Intent": "craft",
+            "X-Agent-Purpose": "conversation"
+        ]) { _, new in new }
+        return provider
+    }
+
     static func makeCopilotProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
         let iid = instance.id
         let provider = OpenAIProvider(

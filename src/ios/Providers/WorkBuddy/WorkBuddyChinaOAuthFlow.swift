@@ -121,6 +121,7 @@ enum WorkBuddyChinaOAuthFlow {
         let nickname: String?
         let phoneNumber: String?
         let domain: String?
+        let enterpriseID: String?
     }
 
     /// Waits for the browser login to be approved and retrieves the account
@@ -139,13 +140,13 @@ enum WorkBuddyChinaOAuthFlow {
             try Task.checkCancellation()
             do {
                 var headers = [
-                    "Authorization": "Bearer \\(accessToken)",
+                    "Authorization": "Bearer \(accessToken)",
                     "X-No-User-Id": "true",
                     "X-No-Enterprise-Id": "true"
                 ]
                 headers["X-Domain"] = domain ?? endpoint.host
                 let payload = try await requestJSON(
-                    path: "/v2/plugin/login/account?state=\\(login.state.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? login.state)",
+                    path: "/v2/plugin/login/account?state=\(login.state.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? login.state)",
                     method: "GET",
                     headers: headers,
                     body: nil,

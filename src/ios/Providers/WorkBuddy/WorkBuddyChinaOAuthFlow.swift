@@ -172,6 +172,38 @@ enum WorkBuddyChinaOAuthFlow {
         throw FlowError.timeout
     }
 
+    /// Exchanges a saved refresh token for a new access token.
+    /// Callers should replace the Keychain values only after this succeeds.
+    static func refreshToken(
+        _ refreshToken: String,
+        domain: String?,
+        session: URLSession = .shared
+    ) async throws -> Token {
+        var headers = [
+            "X-Refresh-Token": refreshToken,
+            "X-Auth-Refresh-Source": "plugin"
+        ]
+        headers["X-Domain"] = domain ?? endpoint.host
+        let payload = try await requestJSON(
+            path: "/v2/plugin/auth/token/refresh",
+            method: "POST",
+            headers: headers,
+            body: Data("{}".utf8),
+            session: session
+        )
+        guard let access = payload["accessToken"] as? String, !access.isEmpty else {
+            throw FlowError.missingToken
+        }
+        return Token(
+            accessToken: access,
+            refreshToken: payload["refreshToken"] as? String,
+            expiresIn: payload["expiresIn"] as? Int,
+            refreshExpiresIn: payload["refreshExpiresIn"] as? Int,
+            domain: payload["domain"] as? String ?? domain,
+            tokenType: payload["tokenType"] as? String
+        )
+    }
+
     @MainActor
     static func openAuthorizationPage(_ login: LoginState) {
         UIApplication.shared.open(login.authorizationURL)

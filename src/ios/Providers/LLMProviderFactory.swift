@@ -369,15 +369,26 @@ enum LLMProviderFactory {
     /// OAuth login and account-bound headers are handled separately; this
     /// builder also honors a manually supplied bearer token for testing.
     static func makeWorkBuddyChinaProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
-        let baseURL = instance.effectiveCustomBaseURL ?? "https://copilot.tencent.com/v2"
-        let token: String
-        if instance.credentialType == .oauth,
-           let manualToken = ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "manual-oauth-token") {
-            token = manualToken
+        let instanceId = instance.id
+        let provider: OpenAIProvider
+        if instance.credentialType == .oauth {
+            provider = OpenAIProvider(
+                oauthTokenProvider: {
+                    try await WorkBuddyChinaOAuthManager.shared.validAccessToken(instanceId: instanceId)
+                },
+                model: model
+            )
         } else {
-            token = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) ?? ""
+            let token = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) ?? ""
+            provider = OpenAIProvider(
+                apiKey: token,
+                model: model,
+                customBaseURL: instance.effectiveCustomBaseURL ?? "https://copilot.tencent.com/v2",
+                appendV1Suffix: false
+            )
         }
-        let provider = OpenAIProvider(apiKey: token, model: model, customBaseURL: baseURL, appendV1Suffix: false)
+        provider.customBaseURL = instance.effectiveCustomBaseURL ?? "https://copilot.tencent.com/v2"
+        provider.appendV1Suffix = false
         provider.extraHeaders.merge([
             "User-Agent": "WorkBuddy/5.5.6",
             "X-Product": "SaaS",
@@ -390,20 +401,17 @@ enum LLMProviderFactory {
         ]) { _, new in new }
         if instance.credentialType == .oauth {
             if let userID = ProviderKeychainHelper.loadOAuthString(
-                instanceId: instance.id,
-                account: "workbuddy-user-id"
+                instanceId: instance.id, account: "workbuddy-user-id"
             ), !userID.isEmpty {
                 provider.extraHeaders["X-User-Id"] = userID
             }
             if let domain = ProviderKeychainHelper.loadOAuthString(
-                instanceId: instance.id,
-                account: "workbuddy-domain"
+                instanceId: instance.id, account: "workbuddy-domain"
             ), !domain.isEmpty {
                 provider.extraHeaders["X-Domain"] = domain
             }
             if let enterpriseID = ProviderKeychainHelper.loadOAuthString(
-                instanceId: instance.id,
-                account: "workbuddy-enterprise-id"
+                instanceId: instance.id, account: "workbuddy-enterprise-id"
             ), !enterpriseID.isEmpty {
                 provider.extraHeaders["X-Enterprise-Id"] = enterpriseID
                 provider.extraHeaders["X-Tenant-Id"] = enterpriseID

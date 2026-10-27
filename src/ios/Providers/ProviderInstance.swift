@@ -149,7 +149,7 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
         // [T-copilot-provider] Copilot's User-Agent is part of the protocol —
         // the API rejects requests that do not look like the editor plugin — so
         // it must not be user-overridable the way a proxy's UA is.
-        case .gemini, .antigravity, .githubCopilot, .unsupported:
+        case .gemini, .antigravity, .githubCopilot, .workBuddyChina, .unsupported:
             return false
         }
     }

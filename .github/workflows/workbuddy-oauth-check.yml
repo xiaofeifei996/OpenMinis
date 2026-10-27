@@ -1,0 +1,44 @@
+name: WorkBuddy China OAuth checks
+
+on:
+  push:
+    branches:
+      - feature/workbuddy-cn-oauth-port
+  pull_request:
+    branches:
+      - main
+      - feature/workbuddy-cn-oauth-port
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  swift-parse:
+    name: Parse WorkBuddy OAuth Swift sources
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Check Swift syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in \
+            src/ios/Providers/WorkBuddy/WorkBuddyChinaOAuthFlow.swift \
+            src/ios/Providers/WorkBuddy/WorkBuddyChinaOAuthManager.swift \
+            src/ios/Providers/LLMProviderFactory.swift \
+            src/ios/Views/Providers/AddProviderView.swift \
+            src/ios/Providers/ProviderTypes.swift
+          do
+            echo "Parsing $file"
+            swiftc -frontend -parse "$file"
+          done

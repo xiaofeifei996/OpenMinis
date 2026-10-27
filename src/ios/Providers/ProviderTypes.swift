@@ -78,9 +78,12 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
     /// back at the catalog already seeded.
     var oauthSupportsModelDiscovery: Bool {
         switch self {
-        case .anthropic, .gemini, .antigravity, .openRouter, .xAI, .kimiCode, .githubCopilot, .workBuddyChina:
+        case .anthropic, .gemini, .antigravity, .openRouter, .xAI, .kimiCode, .githubCopilot:
             // These OAuth branches all reach a real /models endpoint.
             return true
+        case .workBuddyChina:
+            // Native WorkBuddy OAuth has not been implemented yet; only manual tokens are supported.
+            return false
         case .openAI:
             // OpenAIModelsAPI.fetchModelsOAuth() is a compiled-in list.
             return false

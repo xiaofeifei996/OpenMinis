@@ -84,7 +84,6 @@ jobs:
           set -euo pipefail
           xcodebuild -version
           brew install ninja llvm libarchive pkg-config meson go
-          xcodebuild -downloadComponent MetalToolchain
           go version
           meson --version
 

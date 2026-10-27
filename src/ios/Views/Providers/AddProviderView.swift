@@ -1095,6 +1095,20 @@ struct AddProviderView: View {
                     instanceId: pendingInstanceId,
                     account: "manual-oauth-token"
                 )
+                let accessExpiry = Date().addingTimeInterval(TimeInterval(token.expiresIn ?? 3600))
+                ProviderKeychainHelper.saveOAuthString(
+                    String(accessExpiry.timeIntervalSince1970),
+                    instanceId: pendingInstanceId,
+                    account: "workbuddy-access-expiry"
+                )
+                if let refreshExpirySeconds = token.refreshExpiresIn {
+                    let refreshExpiry = Date().addingTimeInterval(TimeInterval(refreshExpirySeconds))
+                    ProviderKeychainHelper.saveOAuthString(
+                        String(refreshExpiry.timeIntervalSince1970),
+                        instanceId: pendingInstanceId,
+                        account: "workbuddy-refresh-expiry"
+                    )
+                }
                 ProviderKeychainHelper.saveOAuthString(
                     account.userID,
                     instanceId: pendingInstanceId,
@@ -1190,6 +1204,9 @@ struct AddProviderView: View {
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-user-id")
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-domain")
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-refresh-token")
+                ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-access-expiry")
+                ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-refresh-expiry")
+                ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-enterprise-id")
                 // OpenRouter OAuth stores a permanent API key, not an OAuth token
                 if selectedType == .openRouter {
                     ProviderKeychainHelper.deleteAPIKey(instanceId: pendingInstanceId)

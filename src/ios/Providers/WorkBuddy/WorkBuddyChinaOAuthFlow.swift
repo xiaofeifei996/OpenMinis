@@ -158,7 +158,8 @@ enum WorkBuddyChinaOAuthFlow {
                     userID: uid,
                     nickname: payload["nickname"] as? String,
                     phoneNumber: payload["phoneNumber"] as? String,
-                    domain: payload["domain"] as? String ?? domain
+                    domain: payload["domain"] as? String ?? domain,
+                    enterpriseID: payload["enterpriseId"] as? String
                 )
             } catch let error as FlowError {
                 if case .server(let code, _) = error, code == 12151 {

@@ -1180,6 +1180,9 @@ struct AddProviderView: View {
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "oauth-email")
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "oauth-gcp-project")
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "manual-oauth-token")
+                ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-user-id")
+                ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-domain")
+                ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-refresh-token")
                 // OpenRouter OAuth stores a permanent API key, not an OAuth token
                 if selectedType == .openRouter {
                     ProviderKeychainHelper.deleteAPIKey(instanceId: pendingInstanceId)

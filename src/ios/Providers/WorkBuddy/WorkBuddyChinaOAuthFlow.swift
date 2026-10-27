@@ -84,7 +84,7 @@ enum WorkBuddyChinaOAuthFlow {
             try Task.checkCancellation()
             do {
                 let payload = try await requestJSON(
-                    path: "/v2/plugin/auth/token?state=\(login.state.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? login.state)",
+                    path: "/v2/plugin/auth/token?state=\(Self.encodeQueryValue(login.state))",
                     method: "GET",
                     headers: [
                         "X-No-Authorization": "true",
@@ -150,7 +150,7 @@ enum WorkBuddyChinaOAuthFlow {
                 ]
                 headers["X-Domain"] = domain ?? endpoint.host
                 let payload = try await requestJSON(
-                    path: "/v2/plugin/login/account?state=\(login.state.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? login.state)",
+                    path: "/v2/plugin/login/account?state=\(Self.encodeQueryValue(login.state))",
                     method: "GET",
                     headers: headers,
                     body: nil,
@@ -242,6 +242,14 @@ enum WorkBuddyChinaOAuthFlow {
         return nil
     }
 
+    /// Percent-encode opaque query values without leaving reserved delimiters
+    /// such as &, +, and = unescaped. urlQueryAllowed leaves some untouched.
+    private static func encodeQueryValue(_ value: String) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+    }
+
     private static func requestJSON(
         path: String,
         method: String,
@@ -266,7 +274,14 @@ enum WorkBuddyChinaOAuthFlow {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw FlowError.invalidResponse
         }
-        let code = json["code"] as? Int ?? 0
+        let code: Int
+        if let number = json["code"] as? NSNumber {
+            code = number.intValue
+        } else if let text = json["code"] as? String, let parsed = Int(text) {
+            code = parsed
+        } else {
+            code = 0
+        }
         guard code == 0 else {
             throw FlowError.server(code: code, message: (json["msg"] as? String) ?? "WorkBuddy request failed.")
         }

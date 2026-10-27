@@ -86,9 +86,22 @@ jobs:
           brew install ninja llvm libarchive pkg-config meson go
           # The iSH cross-build invokes clang with -fuse-ld=lld. Homebrew's
           # LLVM tools live in a keg-only directory, so expose them on PATH.
-          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
-          export PATH="$(brew --prefix llvm)/bin:$PATH"
+          LLVM_PREFIX="$(brew --prefix llvm)"
+          # Homebrew LLVM may keep lld under libexec/bin rather than bin.
+          echo "$LLVM_PREFIX/bin" >> "$GITHUB_PATH"
+          echo "$LLVM_PREFIX/libexec/bin" >> "$GITHUB_PATH"
+          export PATH="$LLVM_PREFIX/libexec/bin:$LLVM_PREFIX/bin:$PATH"
           command -v clang
+          if ! command -v ld.lld >/dev/null 2>&1; then
+            LLD_PATH="$(find "$LLVM_PREFIX" -type f -name 'ld.lld' -perm -111 -print -quit)"
+            if [ -z "$LLD_PATH" ]; then
+              echo "::error::Homebrew LLVM did not provide an executable ld.lld."
+              find "$LLVM_PREFIX" -maxdepth 4 -iname '*lld*' -print | head -50
+              exit 1
+            fi
+            echo "$(dirname "$LLD_PATH")" >> "$GITHUB_PATH"
+            export PATH="$(dirname "$LLD_PATH"):$PATH"
+          fi
           command -v ld.lld
           ld.lld --version
           go version

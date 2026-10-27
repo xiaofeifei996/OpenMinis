@@ -9,6 +9,12 @@ on:
       - main
       - feature/workbuddy-cn-oauth-port
   workflow_dispatch:
+    inputs:
+      run_full_ios_build:
+        description: "Build all native dependencies and the full iOS app"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -69,7 +75,8 @@ jobs:
           done
 
   ios-build:
-    name: Full iOS app build (Xcode)
+    if: github.event_name == 'workflow_dispatch' && inputs.run_full_ios_build
+    name: Full iOS app build (Xcode, manual opt-in)
     runs-on: macos-15
     timeout-minutes: 100
     steps:

@@ -3298,12 +3298,13 @@ final class ProviderConfigStore: ObservableObject {
                 apiKey: key, baseURL: base, appendV1Suffix: false,
                 forceRefresh: forceRefresh, userAgent: "WorkBuddy/5.5.6")
         case (.workBuddyChina, .oauth):
-            // Until the native WorkBuddy browser OAuth flow is wired up, support
-            // only a user-supplied access token; do not pretend a sign-in occurred.
-            guard let token = ProviderKeychainHelper.loadOAuthString(
-                instanceId: instance.id, account: "manual-oauth-token"), !token.isEmpty else {
-                throw ModelRefreshError.noCredential
-            }
+            // Use the same auto-refreshing credential manager as chat requests.
+            // The model endpoint is not yet verified for every WorkBuddy account,
+            // so automatic discovery remains disabled; this path is for an
+            // explicit user-triggered model refresh only.
+            let token = try await WorkBuddyChinaOAuthManager.shared.validAccessToken(
+                instanceId: instance.id
+            )
             let base = customBase ?? "https://copilot.tencent.com/v2"
             return try await OpenAIModelsAPI.fetchModels(
                 apiKey: token, baseURL: base, appendV1Suffix: false,

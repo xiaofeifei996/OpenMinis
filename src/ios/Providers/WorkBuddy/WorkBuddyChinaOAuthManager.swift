@@ -85,7 +85,8 @@ final class WorkBuddyChinaOAuthManager {
         ProviderKeychainHelper.saveOAuthString(
             token.accessToken, instanceId: instanceId, account: "manual-oauth-token"
         )
-        let newExpiry = Date().addingTimeInterval(TimeInterval(token.expiresIn ?? 3600))
+        let newExpiry = token.expiresAt.map { Date(timeIntervalSince1970: $0) }
+            ?? Date().addingTimeInterval(TimeInterval(token.expiresIn ?? 3600))
         ProviderKeychainHelper.saveOAuthString(
             String(newExpiry.timeIntervalSince1970),
             instanceId: instanceId, account: "workbuddy-access-expiry"
@@ -95,7 +96,11 @@ final class WorkBuddyChinaOAuthManager {
                 rotated, instanceId: instanceId, account: "workbuddy-refresh-token"
             )
         }
-        if let seconds = token.refreshExpiresIn {
+        if let absoluteExpiry = token.refreshExpiresAt {
+            ProviderKeychainHelper.saveOAuthString(
+                String(absoluteExpiry), instanceId: instanceId, account: "workbuddy-refresh-expiry"
+            )
+        } else if let seconds = token.refreshExpiresIn {
             let newRefreshExpiry = Date().addingTimeInterval(TimeInterval(seconds))
             ProviderKeychainHelper.saveOAuthString(
                 String(newRefreshExpiry.timeIntervalSince1970),

@@ -57,7 +57,36 @@ jobs:
           xcodebuild -version
           xcodebuild -list -project src/ios/Minis.xcodeproj
 
+      - name: Prepare local build configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f src/ios/Configs/ProviderCustomization.xcconfig ]; then
+            cp src/ios/Configs/ProviderCustomization.xcconfig.example \
+              src/ios/Configs/ProviderCustomization.xcconfig
+          fi
+
+      - name: Check required vendored frameworks
+        id: frameworks
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for framework in \
+            FFmpeg.xcframework Rclone.xcframework \
+            libavcodec.xcframework libavformat.xcframework \
+            libavutil.xcframework libavfilter.xcframework \
+            libswresample.xcframework libswscale.xcframework
+          do
+            if [ ! -d "deps/frameworks/$framework" ]; then
+              echo "::warning::Missing deps/frameworks/$framework"
+              missing=1
+            fi
+          done
+          echo "missing=$missing" >> "$GITHUB_OUTPUT"
+
       - name: Build Minis for iOS Simulator
+        if: steps.frameworks.outputs.missing == '0'
         shell: bash
         run: |
           set -o pipefail
@@ -69,3 +98,10 @@ jobs:
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+      - name: Explain skipped build when vendored frameworks are unavailable
+        if: steps.frameworks.outputs.missing == '1'
+        run: |
+          echo "The full app build was skipped because required vendored XCFrameworks are not present in this checkout."
+          echo "Swift syntax checks still run in the separate swift-parse job."
+          echo "Restore the project's required deps/frameworks/*.xcframework artifacts to enable the full simulator build."

@@ -25,6 +25,8 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
     /// flows through OpenAIProvider like xAI/Kimi. Opt-in, warned about in the
     /// sign-in UI, and hideable via CopilotConstants.isEnabled.
     case githubCopilot
+    /// Tencent WorkBuddy China. OpenAI-compatible chat endpoint with WorkBuddy-specific headers.
+    case workBuddyChina
     /// Sentinel for a provider type this app build doesn't recognize — e.g. a
     /// NEWER build synced an instance whose `provider_type` string isn't a known
     /// case here. We DECODE to this instead of throwing/dropping, so the instance
@@ -50,6 +52,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .xAI: return "xAI (Grok)"
         case .kimiCode: return "Kimi Code"
         case .githubCopilot: return "GitHub Copilot"
+        case .workBuddyChina: return "WorkBuddy 中国版"
         case .unsupported: return "Unsupported"
         }
     }
@@ -75,7 +78,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
     /// back at the catalog already seeded.
     var oauthSupportsModelDiscovery: Bool {
         switch self {
-        case .anthropic, .gemini, .antigravity, .openRouter, .xAI, .kimiCode, .githubCopilot:
+        case .anthropic, .gemini, .antigravity, .openRouter, .xAI, .kimiCode, .githubCopilot, .workBuddyChina:
             // These OAuth branches all reach a real /models endpoint.
             return true
         case .openAI:
@@ -106,6 +109,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         // (`model_picker_enabled`), never a compiled-in guess that would go
         // stale and offer models the account cannot use.
         case .githubCopilot: return []
+        case .workBuddyChina: return []
         case .unsupported: return []
         }
     }
@@ -130,6 +134,8 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
             return AppLocalized("Sign in with your Kimi Code / Coding Plan subscription")
         case .githubCopilot:
             return AppLocalized("Sign in with GitHub — unofficial, use at your own risk")
+        case .workBuddyChina:
+            return AppLocalized("Connect to Tencent WorkBuddy China")
         case .antigravity:
             return AppLocalized("\(builtInModels.count) built-in models")
         case .unsupported:
@@ -149,6 +155,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .xAI: return .vision
         case .kimiCode: return .vision
         case .githubCopilot: return .vision
+        case .workBuddyChina: return .vision
         case .unsupported: return .vision
         }
     }

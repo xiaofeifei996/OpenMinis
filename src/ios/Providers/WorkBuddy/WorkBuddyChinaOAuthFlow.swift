@@ -182,6 +182,7 @@ enum WorkBuddyChinaOAuthFlow {
     static func refreshToken(
         _ refreshToken: String,
         domain: String?,
+        enterpriseID: String? = nil,
         session: URLSession = .shared
     ) async throws -> Token {
         var headers = [
@@ -189,6 +190,10 @@ enum WorkBuddyChinaOAuthFlow {
             "X-Auth-Refresh-Source": "plugin"
         ]
         headers["X-Domain"] = domain ?? endpoint.host
+        if let enterpriseID, !enterpriseID.isEmpty {
+            headers["X-Enterprise-Id"] = enterpriseID
+            headers["X-Tenant-Id"] = enterpriseID
+        }
         let payload = try await requestJSON(
             path: "/v2/plugin/auth/token/refresh",
             method: "POST",

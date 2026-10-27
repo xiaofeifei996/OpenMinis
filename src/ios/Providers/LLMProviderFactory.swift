@@ -388,6 +388,20 @@ enum LLMProviderFactory {
             "X-Agent-Intent": "craft",
             "X-Agent-Purpose": "conversation"
         ]) { _, new in new }
+        if instance.credentialType == .oauth {
+            if let userID = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id,
+                account: "workbuddy-user-id"
+            ), !userID.isEmpty {
+                provider.extraHeaders["X-User-Id"] = userID
+            }
+            if let domain = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id,
+                account: "workbuddy-domain"
+            ), !domain.isEmpty {
+                provider.extraHeaders["X-Domain"] = domain
+            }
+        }
         return provider
     }
 

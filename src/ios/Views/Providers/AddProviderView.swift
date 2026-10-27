@@ -1081,7 +1081,37 @@ struct AddProviderView: View {
             // [T-copilot-provider] Same shape — the device flow lives in
             // CopilotDeviceLoginSheet so the risk notice is shown before it starts.
             case .githubCopilot: break
-            case .workBuddyChina: break
+            case .workBuddyChina:
+                let login = try await WorkBuddyChinaOAuthFlow.begin()
+                await WorkBuddyChinaOAuthFlow.openAuthorizationPage(login)
+                let token = try await WorkBuddyChinaOAuthFlow.pollToken(for: login)
+                let account = try await WorkBuddyChinaOAuthFlow.pollAccount(
+                    for: login,
+                    accessToken: token.accessToken,
+                    domain: token.domain
+                )
+                ProviderKeychainHelper.saveOAuthString(
+                    token.accessToken,
+                    instanceId: pendingInstanceId,
+                    account: "manual-oauth-token"
+                )
+                ProviderKeychainHelper.saveOAuthString(
+                    account.userID,
+                    instanceId: pendingInstanceId,
+                    account: "workbuddy-user-id"
+                )
+                ProviderKeychainHelper.saveOAuthString(
+                    account.domain ?? token.domain ?? "copilot.tencent.com",
+                    instanceId: pendingInstanceId,
+                    account: "workbuddy-domain"
+                )
+                if let refresh = token.refreshToken, !refresh.isEmpty {
+                    ProviderKeychainHelper.saveOAuthString(
+                        refresh,
+                        instanceId: pendingInstanceId,
+                        account: "workbuddy-refresh-token"
+                    )
+                }
             case .unsupported: break // free / unsupported — no OAuth
             }
             oauthAuthTime = Date()
@@ -1264,10 +1294,7 @@ struct AddProviderView: View {
         case .githubCopilot:
             return [.oauth]
         case .workBuddyChina:
-            // The native browser OAuth manager is not wired up yet. Expose
-            // the working bearer-token path rather than a button that silently
-            // reports success without obtaining credentials.
-            return [.apiKey]
+            return [.oauth]
         case .openAIResponses, .gemini:
             return [.apiKey]
         default:

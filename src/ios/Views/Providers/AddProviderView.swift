@@ -992,6 +992,7 @@ struct AddProviderView: View {
         case .xAI: return "https://api.x.ai/v1"
         case .kimiCode: return "https://api.kimi.com/coding"
         case .githubCopilot: return CopilotConstants.apiBaseURL
+        case .workBuddyChina: return "https://copilot.tencent.com/v2"
         default: return "https://api.example.com"
         }
     }
@@ -1080,6 +1081,7 @@ struct AddProviderView: View {
             // [T-copilot-provider] Same shape — the device flow lives in
             // CopilotDeviceLoginSheet so the risk notice is shown before it starts.
             case .githubCopilot: break
+            case .workBuddyChina: break
             case .unsupported: break // free / unsupported — no OAuth
             }
             oauthAuthTime = Date()
@@ -1111,6 +1113,8 @@ struct AddProviderView: View {
             token = ProviderKeychainHelper.loadOAuthToken(instanceId: pendingInstanceId, as: XAITokenStorage.self)?.accessToken
         case .kimiCode:
             token = ProviderKeychainHelper.loadOAuthToken(instanceId: pendingInstanceId, as: KimiTokenStorage.self)?.accessToken
+        case .workBuddyChina:
+            token = ProviderKeychainHelper.loadOAuthString(instanceId: pendingInstanceId, account: "manual-oauth-token")
         case .githubCopilot:
             // The GitHub token is the credential worth showing; the session
             // token is derived and rotates every ~25 minutes.
@@ -1195,6 +1199,7 @@ struct AddProviderView: View {
         case .xAI: return AppLocalized("Sign in with xAI")
         case .kimiCode: return AppLocalized("Sign in with Kimi Code")
         case .githubCopilot: return AppLocalized("Sign in with GitHub")
+        case .workBuddyChina: return AppLocalized("Configure WorkBuddy token")
         case .unsupported: return AppLocalized("Sign In")
         }
     }
@@ -1211,6 +1216,7 @@ struct AddProviderView: View {
         case .xAI: return "xai-..."
         case .kimiCode: return "" // OAuth only
         case .githubCopilot: return "" // OAuth only
+        case .workBuddyChina: return "WorkBuddy access token"
         case .unsupported: return ""
         }
     }
@@ -1226,6 +1232,7 @@ struct AddProviderView: View {
         case .xAI: return "xAI (Grok)"
         case .kimiCode: return "Kimi Code"
         case .githubCopilot: return "GitHub Copilot"
+        case .workBuddyChina: return "WorkBuddy 中国版"
         case .unsupported: return AppLocalized("Unsupported")
         }
     }
@@ -1255,6 +1262,8 @@ struct AddProviderView: View {
         // cannot use is worse than offering none: it looks like the supported
         // path and fails with no explanation.
         case .githubCopilot:
+            return [.oauth]
+        case .workBuddyChina:
             return [.oauth]
         case .openAIResponses, .gemini:
             return [.apiKey]
@@ -1289,6 +1298,10 @@ struct AddProviderView: View {
             return AppLocalized("Sign in with your Kimi Code / Coding Plan subscription.")
         case (.kimiCode, .apiKey):
             return AppLocalized("Use a Kimi Coding API key.")
+        case (.workBuddyChina, .oauth):
+            return AppLocalized("Use a WorkBuddy China access token. Native account login is not yet available.")
+        case (.workBuddyChina, .apiKey):
+            return AppLocalized("WorkBuddy China requires an account access token and account headers.")
         case (.githubCopilot, _):
             // [T-copilot-provider] The risk warning belongs where the user
             // decides, not only inside the sign-in sheet.
@@ -1325,6 +1338,9 @@ struct AddProviderView: View {
         case .kimiCode:
             Image(systemName: "moon.stars")
                 .foregroundStyle(.indigo)
+        case .workBuddyChina:
+            Image(systemName: "bubble.left.and.bubble.right")
+                .foregroundStyle(.blue)
         case .githubCopilot:
             Image(systemName: "chevron.left.forwardslash.chevron.right")
                 .foregroundStyle(.primary)
@@ -1345,6 +1361,7 @@ struct AddProviderView: View {
         case .xAI: return .gray
         case .kimiCode: return .indigo
         case .githubCopilot: return .primary
+        case .workBuddyChina: return .blue
         case .unsupported: return .gray
         }
     }

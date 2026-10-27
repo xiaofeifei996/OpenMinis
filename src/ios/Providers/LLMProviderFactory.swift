@@ -401,6 +401,13 @@ enum LLMProviderFactory {
             ), !domain.isEmpty {
                 provider.extraHeaders["X-Domain"] = domain
             }
+            if let enterpriseID = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id,
+                account: "workbuddy-enterprise-id"
+            ), !enterpriseID.isEmpty {
+                provider.extraHeaders["X-Enterprise-Id"] = enterpriseID
+                provider.extraHeaders["X-Tenant-Id"] = enterpriseID
+            }
         }
         return provider
     }

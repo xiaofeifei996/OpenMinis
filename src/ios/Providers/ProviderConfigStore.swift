@@ -3289,6 +3289,25 @@ final class ProviderConfigStore: ObservableObject {
             let kimiBase = customBase ?? "https://api.kimi.com/coding"
             let kimiAppendV1 = customBase == nil ? true : appendV1  // default base …/coding needs /v1 appended
             return try await OpenAIModelsAPI.fetchModels(apiKey: token, baseURL: kimiBase, appendV1Suffix: kimiAppendV1, forceRefresh: forceRefresh, userAgent: nil)
+        case (.workBuddyChina, .apiKey):
+            guard let key = modelFetchAPIKey(for: instance) else {
+                throw ModelRefreshError.noCredential
+            }
+            let base = customBase ?? "https://copilot.tencent.com/v2"
+            return try await OpenAIModelsAPI.fetchModels(
+                apiKey: key, baseURL: base, appendV1Suffix: false,
+                forceRefresh: forceRefresh, userAgent: "WorkBuddy/5.5.6")
+        case (.workBuddyChina, .oauth):
+            // Until the native WorkBuddy browser OAuth flow is wired up, support
+            // only a user-supplied access token; do not pretend a sign-in occurred.
+            guard let token = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id, account: "manual-oauth-token"), !token.isEmpty else {
+                throw ModelRefreshError.noCredential
+            }
+            let base = customBase ?? "https://copilot.tencent.com/v2"
+            return try await OpenAIModelsAPI.fetchModels(
+                apiKey: token, baseURL: base, appendV1Suffix: false,
+                forceRefresh: forceRefresh, userAgent: "WorkBuddy/5.5.6")
         case (.githubCopilot, _):
             // [T-copilot-provider] Always the OAuth path — there is no API-key
             // form of Copilot. The session token is minted on demand, so a

@@ -1105,6 +1105,13 @@ struct AddProviderView: View {
                     instanceId: pendingInstanceId,
                     account: "workbuddy-domain"
                 )
+                if let enterpriseID = account.enterpriseID, !enterpriseID.isEmpty {
+                    ProviderKeychainHelper.saveOAuthString(
+                        enterpriseID,
+                        instanceId: pendingInstanceId,
+                        account: "workbuddy-enterprise-id"
+                    )
+                }
                 if let refresh = token.refreshToken, !refresh.isEmpty {
                     ProviderKeychainHelper.saveOAuthString(
                         refresh,

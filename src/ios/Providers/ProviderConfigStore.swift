@@ -3477,6 +3477,7 @@ final class ProviderConfigStore: ObservableObject {
         case .xAI: return "https://api.x.ai"
         case .kimiCode: return "https://api.kimi.com/coding"
         case .githubCopilot: return CopilotConstants.apiBaseURL
+        case .workBuddyChina: return "https://copilot.tencent.com/v2"
         case .gemini: return "https://generativelanguage.googleapis.com"
         case .openRouter: return "https://openrouter.ai/api"
         case .antigravity: return nil // No public base URL

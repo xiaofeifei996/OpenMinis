@@ -1095,13 +1095,20 @@ struct AddProviderView: View {
                     instanceId: pendingInstanceId,
                     account: "manual-oauth-token"
                 )
-                let accessExpiry = Date().addingTimeInterval(TimeInterval(token.expiresIn ?? 3600))
+                let accessExpiry = token.expiresAt.map { Date(timeIntervalSince1970: $0) }
+                    ?? Date().addingTimeInterval(TimeInterval(token.expiresIn ?? 3600))
                 ProviderKeychainHelper.saveOAuthString(
                     String(accessExpiry.timeIntervalSince1970),
                     instanceId: pendingInstanceId,
                     account: "workbuddy-access-expiry"
                 )
-                if let refreshExpirySeconds = token.refreshExpiresIn {
+                if let absoluteRefreshExpiry = token.refreshExpiresAt {
+                    ProviderKeychainHelper.saveOAuthString(
+                        String(absoluteRefreshExpiry),
+                        instanceId: pendingInstanceId,
+                        account: "workbuddy-refresh-expiry"
+                    )
+                } else if let refreshExpirySeconds = token.refreshExpiresIn {
                     let refreshExpiry = Date().addingTimeInterval(TimeInterval(refreshExpirySeconds))
                     ProviderKeychainHelper.saveOAuthString(
                         String(refreshExpiry.timeIntervalSince1970),

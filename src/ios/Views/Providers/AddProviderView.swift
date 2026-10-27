@@ -1199,7 +1199,7 @@ struct AddProviderView: View {
         case .xAI: return AppLocalized("Sign in with xAI")
         case .kimiCode: return AppLocalized("Sign in with Kimi Code")
         case .githubCopilot: return AppLocalized("Sign in with GitHub")
-        case .workBuddyChina: return AppLocalized("Configure WorkBuddy token")
+        case .workBuddyChina: return AppLocalized("Configure WorkBuddy access token")
         case .unsupported: return AppLocalized("Sign In")
         }
     }
@@ -1264,7 +1264,10 @@ struct AddProviderView: View {
         case .githubCopilot:
             return [.oauth]
         case .workBuddyChina:
-            return [.oauth]
+            // The native browser OAuth manager is not wired up yet. Expose
+            // the working bearer-token path rather than a button that silently
+            // reports success without obtaining credentials.
+            return [.apiKey]
         case .openAIResponses, .gemini:
             return [.apiKey]
         default:

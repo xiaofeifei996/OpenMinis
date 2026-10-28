@@ -131,7 +131,9 @@ jobs:
             -configuration Debug \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build/DerivedData \
-            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=- \
             build
 
       - name: Package TrollStore-compatible IPA
@@ -144,6 +146,10 @@ jobs:
 
           test -d "$APP_PATH"
           test -f "$APP_PATH/Info.plist"
+          # The app uses App Group storage at startup. Keep the entitlement in the
+          # ad-hoc signature so TrollStore installs can resolve the shared container.
+          codesign -d --entitlements :- "$APP_PATH" > "$GITHUB_WORKSPACE/build/app-entitlements.plist" 2>/dev/null
+          /usr/libexec/PlistBuddy -c "Print :com.apple.security.application-groups:0" "$GITHUB_WORKSPACE/build/app-entitlements.plist" | grep -Fxq "group.com.openminis.app"
           rm -rf "$IPA_ROOT" "$IPA_PATH"
           mkdir -p "$IPA_ROOT/Payload"
           ditto "$APP_PATH" "$IPA_ROOT/Payload/Minis.app"

@@ -1160,7 +1160,7 @@ struct ProviderInstanceDetailView: View {
             return CopilotOAuthManager.shared.isAuthenticated(instanceId: instance.id)
                 ? AppLocalized("Authenticated") : AppLocalized("Not authenticated")
         case .workBuddyChina:
-            return AppLocalized("Use the WorkBuddy China sign-in flow")
+            return "使用WorkBuddy 登录"
         case .unsupported:
             return AppLocalized("Unsupported in this app version")
         }
@@ -1177,7 +1177,7 @@ struct ProviderInstanceDetailView: View {
         case .xAI: return AppLocalized("Sign in with xAI")
         case .kimiCode: return AppLocalized("Sign in with Kimi Code")
         case .githubCopilot: return AppLocalized("Sign in with GitHub")
-        case .workBuddyChina: return AppLocalized("Sign in with WorkBuddy China")
+        case .workBuddyChina: return "使用WorkBuddy 登录"
         case .unsupported: return AppLocalized("Sign In")
         }
     }

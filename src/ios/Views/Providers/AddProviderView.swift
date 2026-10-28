@@ -1263,7 +1263,7 @@ struct AddProviderView: View {
         case .xAI: return AppLocalized("Sign in with xAI")
         case .kimiCode: return AppLocalized("Sign in with Kimi Code")
         case .githubCopilot: return AppLocalized("Sign in with GitHub")
-        case .workBuddyChina: return AppLocalized("Configure WorkBuddy access token")
+        case .workBuddyChina: return "使用WorkBuddy 登录"
         case .unsupported: return AppLocalized("Sign In")
         }
     }
@@ -1363,7 +1363,7 @@ struct AddProviderView: View {
         case (.kimiCode, .apiKey):
             return AppLocalized("Use a Kimi Coding API key.")
         case (.workBuddyChina, .oauth):
-            return AppLocalized("Use a WorkBuddy China access token. Native account login is not yet available.")
+            return "打开WorkBuddy 登录"
         case (.workBuddyChina, .apiKey):
             return AppLocalized("WorkBuddy China requires an account access token and account headers.")
         case (.githubCopilot, _):

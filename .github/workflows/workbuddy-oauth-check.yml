@@ -134,18 +134,30 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
-      - name: Package unsigned iOS app
+      - name: Package TrollStore-compatible IPA
         shell: bash
         run: |
           set -euo pipefail
           APP_PATH="build/DerivedData/Build/Products/Debug-iphoneos/Minis.app"
+          IPA_ROOT="build/ipa-root"
+          IPA_PATH="build/OpenMinis-WorkBuddy.ipa"
+
           test -d "$APP_PATH"
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" build/OpenMinis-WorkBuddy-iOS-unsigned-app.zip
+          test -f "$APP_PATH/Info.plist"
+          rm -rf "$IPA_ROOT" "$IPA_PATH"
+          mkdir -p "$IPA_ROOT/Payload"
+          ditto "$APP_PATH" "$IPA_ROOT/Payload/Minis.app"
+          (cd "$IPA_ROOT" && /usr/bin/zip -qry "$GITHUB_WORKSPACE/$IPA_PATH" Payload)
+
+          # Verify the archive has the exact layout expected by IPA installers.
+          /usr/bin/unzip -Z1 "$IPA_PATH" | grep -Fxq "Payload/Minis.app/Info.plist"
+          /usr/bin/unzip -Z1 "$IPA_PATH" | grep -Eq '^Payload/Minis.app/[^/]+$'
+          echo "Created IPA with Payload/Minis.app/Info.plist"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OpenMinis-WorkBuddy-iOS-unsigned-app
-          path: build/OpenMinis-WorkBuddy-iOS-unsigned-app.zip
+          name: OpenMinis-WorkBuddy-IPA
+          path: build/OpenMinis-WorkBuddy.ipa
           if-no-files-found: error
           retention-days: 7

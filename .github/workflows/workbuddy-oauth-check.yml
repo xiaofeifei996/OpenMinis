@@ -131,9 +131,8 @@ jobs:
             -configuration Debug \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build/DerivedData \
-            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=- \
             build
 
       - name: Package TrollStore-compatible IPA
@@ -147,8 +146,31 @@ jobs:
           test -d "$APP_PATH"
           test -f "$APP_PATH/Info.plist"
           mkdir -p "$GITHUB_WORKSPACE/build"
-          # The app uses App Group storage at startup. Verify the built app has
-          # the group entitlement before packaging it for TrollStore.
+          # Xcode 26 rejects ad-hoc signing during the build phase. Build unsigned,
+          # then ad-hoc sign the finished bundles with the App Group entitlement.
+          ENTITLEMENTS="$GITHUB_WORKSPACE/build/trollstore-entitlements.plist"
+          mkdir -p "$GITHUB_WORKSPACE/build"
+          cat > "$ENTITLEMENTS" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>application-identifier</key>
+            <string>com.openminis.app</string>
+            <key>com.apple.security.application-groups</key>
+            <array><string>group.com.openminis.app</string></array>
+            <key>get-task-allow</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+          plutil -lint "$ENTITLEMENTS"
+          # Sign embedded extensions first, then the containing application.
+          while IFS= read -r -d '' EXTENSION; do
+            codesign --force --sign - --entitlements "$ENTITLEMENTS" "$EXTENSION"
+          done < <(find "$APP_PATH" -type d -name '*.appex' -print0)
+          codesign --force --sign - --entitlements "$ENTITLEMENTS" "$APP_PATH"
+          codesign --verify --deep "$APP_PATH"
           codesign -d --entitlements :- "$APP_PATH" > "$GITHUB_WORKSPACE/build/app-entitlements.plist" 2>/dev/null
           /usr/libexec/PlistBuddy -c "Print :com.apple.security.application-groups:0" "$GITHUB_WORKSPACE/build/app-entitlements.plist" | grep -Fxq "group.com.openminis.app"
           rm -rf "$IPA_ROOT" "$IPA_PATH"

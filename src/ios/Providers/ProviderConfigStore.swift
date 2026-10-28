@@ -3297,7 +3297,12 @@ final class ProviderConfigStore: ObservableObject {
             if let bearer = ProviderKeychainHelper.loadOAuthString(
                 instanceId: instance.id, account: "manual-oauth-token"
             ), !bearer.isEmpty {
-                let models = try await WorkBuddyChinaOAuthFlow.fetchModels(accessToken: bearer)
+                let models = try await WorkBuddyChinaOAuthFlow.fetchModels(
+                    accessToken: bearer,
+                    userID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-user-id"),
+                    domain: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-domain"),
+                    enterpriseID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-enterprise-id")
+                )
                 guard !models.isEmpty else { throw ModelRefreshError.noCredential }
                 return models
             }
@@ -3313,7 +3318,12 @@ final class ProviderConfigStore: ObservableObject {
             let token = try await WorkBuddyChinaOAuthManager.shared.validAccessToken(
                 instanceId: instance.id
             )
-            let models = try await WorkBuddyChinaOAuthFlow.fetchModels(accessToken: token)
+            let models = try await WorkBuddyChinaOAuthFlow.fetchModels(
+                accessToken: token,
+                userID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-user-id"),
+                domain: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-domain"),
+                enterpriseID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-enterprise-id")
+            )
             guard !models.isEmpty else { throw ModelRefreshError.noCredential }
             return models
         case (.githubCopilot, _):

@@ -126,6 +126,7 @@ enum WorkBuddyChinaOAuthFlow {
         let phoneNumber: String?
         let domain: String?
         let enterpriseID: String?
+        let accountType: String?
     }
 
     /// Waits for the browser login to be approved and retrieves the account
@@ -159,12 +160,37 @@ enum WorkBuddyChinaOAuthFlow {
                 guard let uid = payload["uid"] as? String, !uid.isEmpty else {
                     throw FlowError.invalidResponse
                 }
+                let accountType = (payload["type"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                var enterpriseID = (payload["enterpriseId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                if (enterpriseID ?? "").isEmpty, let accountType, !accountType.isEmpty, accountType.lowercased() != "personal" {
+                    // Some enterprise accounts omit enterpriseId from /login/account.
+                    if let listed = try? await requestJSON(path: "/v2/plugin/accounts", method: "GET", headers: headers, body: nil, session: session) {
+                        let accounts = listed["accounts"] as? [[String: Any]] ?? []
+                        let matching = accounts.filter {
+                            ($0["uid"] as? String) == uid && !(($0["enterpriseId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+                        }
+                        let sameType = matching.filter { (($0["type"] as? String)?.lowercased() ?? "") == accountType.lowercased() }
+                        let lastUsed = matching.filter { entry in
+                            let value = entry["lastLogin"]
+                            if value == nil || value is NSNull { return false }
+                            if let text = value as? String { return !text.isEmpty }
+                            if let number = value as? NSNumber { return number.doubleValue != 0 }
+                            return true
+                        }
+                        var selected: [String: Any]?
+                        if sameType.count == 1 { selected = sameType[0] }
+                        else if lastUsed.count == 1 { selected = lastUsed[0] }
+                        else if matching.count == 1 { selected = matching[0] }
+                        enterpriseID = selected?["enterpriseId"] as? String
+                    }
+                }
                 return Account(
                     userID: uid,
                     nickname: payload["nickname"] as? String,
                     phoneNumber: payload["phoneNumber"] as? String,
                     domain: payload["domain"] as? String ?? domain,
-                    enterpriseID: payload["enterpriseId"] as? String
+                    enterpriseID: (enterpriseID ?? "").isEmpty ? nil : enterpriseID,
+                    accountType: accountType
                 )
             } catch let error as FlowError {
                 if case .server(let code, _) = error, code == 12151 {

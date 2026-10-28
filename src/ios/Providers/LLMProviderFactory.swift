@@ -399,6 +399,16 @@ enum LLMProviderFactory {
             "X-Agent-Intent": "craft",
             "X-Agent-Purpose": "conversation"
         ]) { _, new in new }
+        // WorkBuddy's gateway expects request identifiers in the desktop client's
+        // chat headers. This provider hook runs for each outbound request.
+        provider.perRequestHeaders = { _ in
+            let requestID = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+            return [
+                "X-Conversation-Message-ID": requestID,
+                "X-Request-ID": requestID,
+                "X-Conversation-Request-ID": UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+            ]
+        }
         if instance.credentialType == .oauth {
             if let userID = ProviderKeychainHelper.loadOAuthString(
                 instanceId: instance.id, account: "workbuddy-user-id"

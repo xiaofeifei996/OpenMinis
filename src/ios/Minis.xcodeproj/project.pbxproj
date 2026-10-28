@@ -619,6 +619,8 @@
 		RCL000119 /* BackupHistoryDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = RCL000219 /* BackupHistoryDetailView.swift */; };
 		RCL000120 /* BackupCategoryIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = RCL000220 /* BackupCategoryIcon.swift */; };
 		RCL000121 /* BackupHUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = RCL000221 /* BackupHUD.swift */; };
+		D0A0B0C0D0E0F00100000001 /* WorkBuddyChinaOAuthFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F00100000002 /* WorkBuddyChinaOAuthFlow.swift */; };
+		D0A0B0C0D0E0F00200000001 /* WorkBuddyChinaOAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F00200000002 /* WorkBuddyChinaOAuthManager.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1441,6 +1443,8 @@
 		RCL000219 /* BackupHistoryDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupHistoryDetailView.swift; sourceTree = "<group>"; };
 		RCL000220 /* BackupCategoryIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupCategoryIcon.swift; sourceTree = "<group>"; };
 		RCL000221 /* BackupHUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupHUD.swift; sourceTree = "<group>"; };
+		D0A0B0C0D0E0F00100000002 /* WorkBuddyChinaOAuthFlow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkBuddyChinaOAuthFlow.swift; sourceTree = "<group>"; };
+		D0A0B0C0D0E0F00200000002 /* WorkBuddyChinaOAuthManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkBuddyChinaOAuthManager.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -1784,6 +1788,7 @@
 				E7A000030 /* OpenRouter */,
 				EXA000030 /* xAI */,
 				42A3821DABA8773E8A5BA57E /* Voice */,
+				D0A0B0C0D0E0F00100000003 /* WorkBuddy */,
 			);
 			path = Providers;
 			sourceTree = "<group>";
@@ -2708,6 +2713,15 @@
 			path = MCP;
 			sourceTree = "<group>";
 		};
+		D0A0B0C0D0E0F00100000003 /* WorkBuddy */ = {
+			isa = PBXGroup;
+			children = (
+				D0A0B0C0D0E0F00100000002 /* WorkBuddyChinaOAuthFlow.swift */,
+				D0A0B0C0D0E0F00200000002 /* WorkBuddyChinaOAuthManager.swift */,
+			);
+			path = WorkBuddy;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -3087,6 +3101,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D0A0B0C0D0E0F00200000001 /* WorkBuddyChinaOAuthManager.swift in Sources */,
+				D0A0B0C0D0E0F00100000001 /* WorkBuddyChinaOAuthFlow.swift in Sources */,
 				AC0000202 /* ProviderCustomizationGenerated.swift in Sources */,
 				E54000AC1 /* DebugSkillGenerated.swift in Sources */,
 				E5FP00100 /* AppGroupChangeWatcher.swift in Sources */,

@@ -3289,6 +3289,43 @@ final class ProviderConfigStore: ObservableObject {
             let kimiBase = customBase ?? "https://api.kimi.com/coding"
             let kimiAppendV1 = customBase == nil ? true : appendV1  // default base …/coding needs /v1 appended
             return try await OpenAIModelsAPI.fetchModels(apiKey: token, baseURL: kimiBase, appendV1Suffix: kimiAppendV1, forceRefresh: forceRefresh, userAgent: nil)
+        case (.workBuddyChina, .apiKey):
+            // WorkBuddy's static Bearer Token mode stores its credential in the
+            // OAuth-token slot. Prefer that account token for the account-scoped
+            // /v3/config catalog; otherwise this branch incorrectly falls through
+            // to API-key validation and reports "no API key is set".
+            if let bearer = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id, account: "manual-oauth-token"
+            ), !bearer.isEmpty {
+                let models = try await WorkBuddyChinaOAuthFlow.fetchModels(
+                    accessToken: bearer,
+                    userID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-user-id"),
+                    domain: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-domain"),
+                    enterpriseID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-enterprise-id")
+                )
+                guard !models.isEmpty else { throw ModelRefreshError.noCredential }
+                return models
+            }
+            guard let key = modelFetchAPIKey(for: instance) else {
+                throw ModelRefreshError.noCredential
+            }
+            let base = customBase ?? "https://copilot.tencent.com/v2"
+            return try await OpenAIModelsAPI.fetchModels(
+                apiKey: key, baseURL: base, appendV1Suffix: false,
+                forceRefresh: forceRefresh, userAgent: "WorkBuddy/5.5.6")
+        case (.workBuddyChina, .oauth):
+            // Use WorkBuddy's account-scoped model catalog; /v2/models may only return `auto`.
+            let token = try await WorkBuddyChinaOAuthManager.shared.validAccessToken(
+                instanceId: instance.id
+            )
+            let models = try await WorkBuddyChinaOAuthFlow.fetchModels(
+                accessToken: token,
+                userID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-user-id"),
+                domain: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-domain"),
+                enterpriseID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-enterprise-id")
+            )
+            guard !models.isEmpty else { throw ModelRefreshError.noCredential }
+            return models
         case (.githubCopilot, _):
             // [T-copilot-provider] Always the OAuth path — there is no API-key
             // form of Copilot. The session token is minted on demand, so a
@@ -3477,6 +3514,7 @@ final class ProviderConfigStore: ObservableObject {
         case .xAI: return "https://api.x.ai"
         case .kimiCode: return "https://api.kimi.com/coding"
         case .githubCopilot: return CopilotConstants.apiBaseURL
+        case .workBuddyChina: return "https://copilot.tencent.com/v2"
         case .gemini: return "https://generativelanguage.googleapis.com"
         case .openRouter: return "https://openrouter.ai/api"
         case .antigravity: return nil // No public base URL

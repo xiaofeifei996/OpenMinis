@@ -992,6 +992,7 @@ struct AddProviderView: View {
         case .xAI: return "https://api.x.ai/v1"
         case .kimiCode: return "https://api.kimi.com/coding"
         case .githubCopilot: return CopilotConstants.apiBaseURL
+        case .workBuddyChina: return "https://copilot.tencent.com/v2"
         default: return "https://api.example.com"
         }
     }
@@ -1080,6 +1081,65 @@ struct AddProviderView: View {
             // [T-copilot-provider] Same shape — the device flow lives in
             // CopilotDeviceLoginSheet so the risk notice is shown before it starts.
             case .githubCopilot: break
+            case .workBuddyChina:
+                let login = try await WorkBuddyChinaOAuthFlow.begin()
+                await WorkBuddyChinaOAuthFlow.openAuthorizationPage(login)
+                let token = try await WorkBuddyChinaOAuthFlow.pollToken(for: login)
+                let account = try await WorkBuddyChinaOAuthFlow.pollAccount(
+                    for: login,
+                    accessToken: token.accessToken,
+                    domain: token.domain
+                )
+                ProviderKeychainHelper.saveOAuthString(
+                    token.accessToken,
+                    instanceId: pendingInstanceId,
+                    account: "manual-oauth-token"
+                )
+                let accessExpiry = token.expiresAt.map { Date(timeIntervalSince1970: $0) }
+                    ?? Date().addingTimeInterval(TimeInterval(token.expiresIn ?? 3600))
+                ProviderKeychainHelper.saveOAuthString(
+                    String(accessExpiry.timeIntervalSince1970),
+                    instanceId: pendingInstanceId,
+                    account: "workbuddy-access-expiry"
+                )
+                if let absoluteRefreshExpiry = token.refreshExpiresAt {
+                    ProviderKeychainHelper.saveOAuthString(
+                        String(absoluteRefreshExpiry),
+                        instanceId: pendingInstanceId,
+                        account: "workbuddy-refresh-expiry"
+                    )
+                } else if let refreshExpirySeconds = token.refreshExpiresIn {
+                    let refreshExpiry = Date().addingTimeInterval(TimeInterval(refreshExpirySeconds))
+                    ProviderKeychainHelper.saveOAuthString(
+                        String(refreshExpiry.timeIntervalSince1970),
+                        instanceId: pendingInstanceId,
+                        account: "workbuddy-refresh-expiry"
+                    )
+                }
+                ProviderKeychainHelper.saveOAuthString(
+                    account.userID,
+                    instanceId: pendingInstanceId,
+                    account: "workbuddy-user-id"
+                )
+                ProviderKeychainHelper.saveOAuthString(
+                    account.domain ?? token.domain ?? "copilot.tencent.com",
+                    instanceId: pendingInstanceId,
+                    account: "workbuddy-domain"
+                )
+                if let enterpriseID = account.enterpriseID, !enterpriseID.isEmpty {
+                    ProviderKeychainHelper.saveOAuthString(
+                        enterpriseID,
+                        instanceId: pendingInstanceId,
+                        account: "workbuddy-enterprise-id"
+                    )
+                }
+                if let refresh = token.refreshToken, !refresh.isEmpty {
+                    ProviderKeychainHelper.saveOAuthString(
+                        refresh,
+                        instanceId: pendingInstanceId,
+                        account: "workbuddy-refresh-token"
+                    )
+                }
             case .unsupported: break // free / unsupported — no OAuth
             }
             oauthAuthTime = Date()
@@ -1111,6 +1171,8 @@ struct AddProviderView: View {
             token = ProviderKeychainHelper.loadOAuthToken(instanceId: pendingInstanceId, as: XAITokenStorage.self)?.accessToken
         case .kimiCode:
             token = ProviderKeychainHelper.loadOAuthToken(instanceId: pendingInstanceId, as: KimiTokenStorage.self)?.accessToken
+        case .workBuddyChina:
+            token = ProviderKeychainHelper.loadOAuthString(instanceId: pendingInstanceId, account: "manual-oauth-token")
         case .githubCopilot:
             // The GitHub token is the credential worth showing; the session
             // token is derived and rotates every ~25 minutes.
@@ -1146,6 +1208,12 @@ struct AddProviderView: View {
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "oauth-email")
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "oauth-gcp-project")
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "manual-oauth-token")
+                ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-user-id")
+                ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-domain")
+                ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-refresh-token")
+                ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-access-expiry")
+                ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-refresh-expiry")
+                ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-enterprise-id")
                 // OpenRouter OAuth stores a permanent API key, not an OAuth token
                 if selectedType == .openRouter {
                     ProviderKeychainHelper.deleteAPIKey(instanceId: pendingInstanceId)
@@ -1195,6 +1263,7 @@ struct AddProviderView: View {
         case .xAI: return AppLocalized("Sign in with xAI")
         case .kimiCode: return AppLocalized("Sign in with Kimi Code")
         case .githubCopilot: return AppLocalized("Sign in with GitHub")
+        case .workBuddyChina: return "使用WorkBuddy 登录"
         case .unsupported: return AppLocalized("Sign In")
         }
     }
@@ -1211,6 +1280,7 @@ struct AddProviderView: View {
         case .xAI: return "xai-..."
         case .kimiCode: return "" // OAuth only
         case .githubCopilot: return "" // OAuth only
+        case .workBuddyChina: return "WorkBuddy access token"
         case .unsupported: return ""
         }
     }
@@ -1226,6 +1296,7 @@ struct AddProviderView: View {
         case .xAI: return "xAI (Grok)"
         case .kimiCode: return "Kimi Code"
         case .githubCopilot: return "GitHub Copilot"
+        case .workBuddyChina: return "WorkBuddy 中国版"
         case .unsupported: return AppLocalized("Unsupported")
         }
     }
@@ -1255,6 +1326,8 @@ struct AddProviderView: View {
         // cannot use is worse than offering none: it looks like the supported
         // path and fails with no explanation.
         case .githubCopilot:
+            return [.oauth]
+        case .workBuddyChina:
             return [.oauth]
         case .openAIResponses, .gemini:
             return [.apiKey]
@@ -1289,6 +1362,10 @@ struct AddProviderView: View {
             return AppLocalized("Sign in with your Kimi Code / Coding Plan subscription.")
         case (.kimiCode, .apiKey):
             return AppLocalized("Use a Kimi Coding API key.")
+        case (.workBuddyChina, .oauth):
+            return "打开WorkBuddy 登录"
+        case (.workBuddyChina, .apiKey):
+            return AppLocalized("WorkBuddy China requires an account access token and account headers.")
         case (.githubCopilot, _):
             // [T-copilot-provider] The risk warning belongs where the user
             // decides, not only inside the sign-in sheet.
@@ -1325,6 +1402,9 @@ struct AddProviderView: View {
         case .kimiCode:
             Image(systemName: "moon.stars")
                 .foregroundStyle(.indigo)
+        case .workBuddyChina:
+            Image(systemName: "bubble.left.and.bubble.right")
+                .foregroundStyle(.blue)
         case .githubCopilot:
             Image(systemName: "chevron.left.forwardslash.chevron.right")
                 .foregroundStyle(.primary)
@@ -1345,6 +1425,7 @@ struct AddProviderView: View {
         case .xAI: return .gray
         case .kimiCode: return .indigo
         case .githubCopilot: return .primary
+        case .workBuddyChina: return .blue
         case .unsupported: return .gray
         }
     }

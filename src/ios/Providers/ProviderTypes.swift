@@ -25,6 +25,8 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
     /// flows through OpenAIProvider like xAI/Kimi. Opt-in, warned about in the
     /// sign-in UI, and hideable via CopilotConstants.isEnabled.
     case githubCopilot
+    /// Tencent WorkBuddy China. OpenAI-compatible chat endpoint with WorkBuddy-specific headers.
+    case workBuddyChina
     /// Sentinel for a provider type this app build doesn't recognize — e.g. a
     /// NEWER build synced an instance whose `provider_type` string isn't a known
     /// case here. We DECODE to this instead of throwing/dropping, so the instance
@@ -50,6 +52,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .xAI: return "xAI (Grok)"
         case .kimiCode: return "Kimi Code"
         case .githubCopilot: return "GitHub Copilot"
+        case .workBuddyChina: return "WorkBuddy 中国版"
         case .unsupported: return "Unsupported"
         }
     }
@@ -77,6 +80,9 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         switch self {
         case .anthropic, .gemini, .antigravity, .openRouter, .xAI, .kimiCode, .githubCopilot:
             // These OAuth branches all reach a real /models endpoint.
+            return true
+        case .workBuddyChina:
+            // Fetch the account-scoped catalog from WorkBuddy /v3/config.
             return true
         case .openAI:
             // OpenAIModelsAPI.fetchModelsOAuth() is a compiled-in list.
@@ -106,6 +112,20 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         // (`model_picker_enabled`), never a compiled-in guess that would go
         // stale and offer models the account cannot use.
         case .githubCopilot: return []
+        // WorkBuddy's upstream catalog confirms "auto" as the default model.
+        // Keep this fallback intentionally minimal until account-scoped /v3/config
+        // discovery is implemented; don't advertise speculative model IDs.
+        case .workBuddyChina:
+            return [
+                LLMModel(
+                    id: "auto",
+                    displayName: "Auto",
+                    provider: "WorkBuddy 中国版",
+                    modalityOverride: .textOnly,
+                    contextWindow: 168_000,
+                    supportsReasoning: false
+                )
+            ]
         case .unsupported: return []
         }
     }
@@ -130,6 +150,8 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
             return AppLocalized("Sign in with your Kimi Code / Coding Plan subscription")
         case .githubCopilot:
             return AppLocalized("Sign in with GitHub — unofficial, use at your own risk")
+        case .workBuddyChina:
+            return "使用WorkBuddy 登录"
         case .antigravity:
             return AppLocalized("\(builtInModels.count) built-in models")
         case .unsupported:
@@ -149,6 +171,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .xAI: return .vision
         case .kimiCode: return .vision
         case .githubCopilot: return .vision
+        case .workBuddyChina: return .vision
         case .unsupported: return .vision
         }
     }

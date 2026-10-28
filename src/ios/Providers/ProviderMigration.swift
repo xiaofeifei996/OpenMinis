@@ -91,6 +91,9 @@ enum ProviderMigration {
             case .githubCopilot:
                 // [T-copilot-provider] Also new — never had a singleton token.
                 break
+            case .workBuddyChina:
+                // WorkBuddy China uses its own OAuth flow; no legacy singleton token.
+                break
             case .unsupported:
                 break
             }

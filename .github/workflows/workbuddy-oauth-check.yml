@@ -1,0 +1,191 @@
+name: WorkBuddy China OAuth checks
+
+on:
+  push:
+    branches:
+      - feature/workbuddy-cn-oauth-port
+  pull_request:
+    branches:
+      - main
+      - feature/workbuddy-cn-oauth-port
+  workflow_dispatch:
+    inputs:
+      run_full_ios_build:
+        description: "Build all native dependencies and the full iOS app"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  swift-parse:
+    name: Validate WorkBuddy OAuth Swift syntax
+    runs-on: macos-26
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Check Swift syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in \
+            src/ios/Providers/WorkBuddy/WorkBuddyChinaOAuthFlow.swift \
+            src/ios/Providers/WorkBuddy/WorkBuddyChinaOAuthManager.swift \
+            src/ios/Providers/LLMProviderFactory.swift \
+            src/ios/Views/Providers/AddProviderView.swift \
+            src/ios/Providers/ProviderTypes.swift
+          do
+            echo "Parsing $file"
+            swiftc -frontend -parse "$file"
+          done
+
+      - name: Validate Xcode project prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f src/ios/Minis.xcodeproj/project.pbxproj
+          test -f src/ios/Configs/ProviderCustomization.xcconfig.example
+          echo "Xcode project and customization template are present."
+          if [ ! -f src/ios/Configs/ProviderCustomization.xcconfig ]; then
+            echo "::notice::Full app build will generate ProviderCustomization.xcconfig from the example."
+          fi
+          for framework in \
+            deps/frameworks/FFmpeg.xcframework \
+            deps/frameworks/Rclone.xcframework \
+            deps/frameworks/libavcodec.xcframework \
+            deps/frameworks/libavformat.xcframework \
+            deps/frameworks/libavutil.xcframework \
+            deps/frameworks/libavfilter.xcframework \
+            deps/frameworks/libswresample.xcframework \
+            deps/frameworks/libswscale.xcframework
+          do
+            if [ ! -d "$framework" ]; then
+              echo "::notice::Optional build prerequisite is absent in this checkout: $framework"
+            fi
+          done
+
+  ios-build:
+    if: (github.event_name == 'workflow_dispatch' && inputs.run_full_ios_build) || github.event_name == 'push' || github.event_name == 'pull_request'
+    name: Full iOS app build (Xcode)
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Go toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.5'
+          check-latest: false
+
+      - name: Select Xcode and install build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          brew install ninja llvm lld libarchive pkg-config meson
+          LLVM_PREFIX="$(brew --prefix llvm)"
+          LLD_PREFIX="$(brew --prefix lld)"
+          echo "$LLVM_PREFIX/bin" >> "$GITHUB_PATH"
+          echo "$LLD_PREFIX/bin" >> "$GITHUB_PATH"
+          export PATH="$LLD_PREFIX/bin:$LLVM_PREFIX/bin:$PATH"
+          command -v clang
+          command -v ld.lld
+          ld.lld --version
+          go version
+          meson --version
+
+      - name: Prepare customization config
+        run: cp src/ios/Configs/ProviderCustomization.xcconfig.example src/ios/Configs/ProviderCustomization.xcconfig
+
+      - name: Build iOS native dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./deps/build_lame.sh
+          ./deps/build_ffmpeg.sh
+          ./deps/build_ish.sh
+          ./deps/prepare_alpine_rootfs.sh
+          ./deps/build_rclone_ios.sh
+
+      - name: Build Minis for generic iOS device
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project src/ios/Minis.xcodeproj \
+            -scheme Minis \
+            -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Package TrollStore-compatible IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="build/DerivedData/Build/Products/Debug-iphoneos/Minis.app"
+          IPA_ROOT="build/ipa-root"
+          IPA_PATH="build/OpenMinis-WorkBuddy.ipa"
+
+          test -d "$APP_PATH"
+          test -f "$APP_PATH/Info.plist"
+          mkdir -p "$GITHUB_WORKSPACE/build"
+          # Xcode 26 rejects ad-hoc signing during the build phase. Build unsigned,
+          # then ad-hoc sign the finished bundles with the App Group entitlement.
+          ENTITLEMENTS="$GITHUB_WORKSPACE/build/trollstore-entitlements.plist"
+          mkdir -p "$GITHUB_WORKSPACE/build"
+          cat > "$ENTITLEMENTS" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>application-identifier</key>
+            <string>com.openminis.app</string>
+            <key>com.apple.security.application-groups</key>
+            <array><string>group.com.openminis.app</string></array>
+            <key>get-task-allow</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+          plutil -lint "$ENTITLEMENTS"
+          # Sign embedded extensions first, then the containing application.
+          while IFS= read -r -d '' EXTENSION; do
+            codesign --force --sign - --entitlements "$ENTITLEMENTS" "$EXTENSION"
+          done < <(find "$APP_PATH" -type d -name '*.appex' -print0)
+          codesign --force --sign - --entitlements "$ENTITLEMENTS" "$APP_PATH"
+          codesign --verify --deep "$APP_PATH"
+          codesign -d --entitlements :- "$APP_PATH" > "$GITHUB_WORKSPACE/build/app-entitlements.plist" 2>/dev/null
+          /usr/libexec/PlistBuddy -c "Print :com.apple.security.application-groups:0" "$GITHUB_WORKSPACE/build/app-entitlements.plist" | grep -Fxq "group.com.openminis.app"
+          rm -rf "$IPA_ROOT" "$IPA_PATH"
+          mkdir -p "$IPA_ROOT/Payload"
+          ditto "$APP_PATH" "$IPA_ROOT/Payload/Minis.app"
+          (cd "$IPA_ROOT" && /usr/bin/zip -qry "$GITHUB_WORKSPACE/$IPA_PATH" Payload)
+
+          /usr/bin/unzip -Z1 "$IPA_PATH" | grep -Fxq "Payload/Minis.app/Info.plist"
+          /usr/bin/unzip -Z1 "$IPA_PATH" | grep -Eq '^Payload/Minis.app/[^/]+$'
+          echo "Created IPA with Payload/Minis.app/Info.plist"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenMinis-WorkBuddy-IPA
+          path: build/OpenMinis-WorkBuddy.ipa
+          if-no-files-found: error
+          retention-days: 7

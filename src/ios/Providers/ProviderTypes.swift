@@ -151,7 +151,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .githubCopilot:
             return AppLocalized("Sign in with GitHub — unofficial, use at your own risk")
         case .workBuddyChina:
-            return AppLocalized("Connect to Tencent WorkBuddy China")
+            return "使用WorkBuddy 登录"
         case .antigravity:
             return AppLocalized("\(builtInModels.count) built-in models")
         case .unsupported:

@@ -32,6 +32,7 @@ enum WorkBuddyChinaOAuthFlow {
         case server(code: Int, message: String)
         case timeout
         case missingToken
+        case emptyModelCatalog
 
         var errorDescription: String? {
             switch self {
@@ -39,6 +40,7 @@ enum WorkBuddyChinaOAuthFlow {
             case .server(_, let message): return message
             case .timeout: return "WorkBuddy sign-in timed out. Please try again."
             case .missingToken: return "WorkBuddy sign-in completed without an access token."
+            case .emptyModelCatalog: return "WorkBuddy login succeeded, but /v3/config returned no usable model IDs. Check the account's model permissions and the returned catalog format."
             }
         }
     }
@@ -270,12 +272,32 @@ enum WorkBuddyChinaOAuthFlow {
         )
 
         let agents = payload["agents"] as? [[String: Any]] ?? []
-        let modelIDs = agents.first(where: { ($0["name"] as? String) == "cli" })?["models"] as? [String] ?? []
         let details = payload["models"] as? [[String: Any]] ?? []
+
+        // The catalog has varied between CLI and IDE responses. Prefer the
+        // CLI agent when present, but do not turn a valid catalog with a
+        // differently named agent into the misleading "no API key" error.
+        let cliAgent = agents.first {
+            ($0["name"] as? String)?.lowercased() == "cli"
+        }
+        let agentIDs = (cliAgent == nil ? agents : [cliAgent!]).flatMap { agent -> [String] in
+            if let ids = agent["models"] as? [String] { return ids }
+            if let models = agent["models"] as? [[String: Any]] {
+                return models.compactMap { ($0["id"] ?? $0["name"]) as? String }
+            }
+            return []
+        }
+        let detailIDs = details.compactMap { ($0["id"] ?? $0["name"]) as? String }
+        let candidates = agentIDs.isEmpty ? detailIDs : agentIDs
+
         var seen = Set<String>()
-        return modelIDs.compactMap { id in
+        let models = candidates.compactMap { rawID -> LLMModel? in
+            let id = rawID.hasPrefix("models/") ? String(rawID.dropFirst(7)) : rawID
             guard !id.isEmpty, id.count <= 256, seen.insert(id).inserted else { return nil }
-            let detail = details.first(where: { ($0["id"] as? String) == id }) ?? [:]
+            let detail = details.first {
+                (($0["id"] ?? $0["name"]) as? String) == rawID
+                    || (($0["id"] ?? $0["name"]) as? String) == id
+            } ?? [:]
             let displayName = (detail["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? id
             let reasoning = detail["reasoning"] as? [String: Any]
             let supportsReasoning = !(reasoning?["supportedEfforts"] as? [String] ?? []).isEmpty
@@ -289,6 +311,8 @@ enum WorkBuddyChinaOAuthFlow {
                 supportsReasoning: supportsReasoning
             )
         }
+        guard !models.isEmpty else { throw FlowError.emptyModelCatalog }
+        return models
     }
 
     @MainActor

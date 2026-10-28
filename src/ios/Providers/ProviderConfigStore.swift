@@ -3297,10 +3297,7 @@ final class ProviderConfigStore: ObservableObject {
             if let bearer = ProviderKeychainHelper.loadOAuthString(
                 instanceId: instance.id, account: "manual-oauth-token"
             ), !bearer.isEmpty {
-                let token = try await WorkBuddyChinaOAuthManager.shared.validAccessToken(
-                    instanceId: instance.id
-                )
-                let models = try await WorkBuddyChinaOAuthFlow.fetchModels(accessToken: token)
+                let models = try await WorkBuddyChinaOAuthFlow.fetchModels(accessToken: bearer)
                 guard !models.isEmpty else { throw ModelRefreshError.noCredential }
                 return models
             }

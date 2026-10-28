@@ -1288,6 +1288,7 @@ struct ProviderInstanceDetailView: View {
         case .xAI: return "xai-..."
         case .kimiCode: return "" // OAuth only
         case .githubCopilot: return "" // OAuth only
+        case .workBuddyChina: return "" // OAuth only
         case .antigravity: return "API Key..."
         case .openRouter: return "sk-or-..."
         case .openAIResponses: return "sk-..."

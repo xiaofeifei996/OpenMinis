@@ -3290,6 +3290,20 @@ final class ProviderConfigStore: ObservableObject {
             let kimiAppendV1 = customBase == nil ? true : appendV1  // default base …/coding needs /v1 appended
             return try await OpenAIModelsAPI.fetchModels(apiKey: token, baseURL: kimiBase, appendV1Suffix: kimiAppendV1, forceRefresh: forceRefresh, userAgent: nil)
         case (.workBuddyChina, .apiKey):
+            // WorkBuddy's static Bearer Token mode stores its credential in the
+            // OAuth-token slot. Prefer that account token for the account-scoped
+            // /v3/config catalog; otherwise this branch incorrectly falls through
+            // to API-key validation and reports "no API key is set".
+            if let bearer = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id, account: "manual-oauth-token"
+            ), !bearer.isEmpty {
+                let token = try await WorkBuddyChinaOAuthManager.shared.validAccessToken(
+                    instanceId: instance.id
+                )
+                let models = try await WorkBuddyChinaOAuthFlow.fetchModels(accessToken: token)
+                guard !models.isEmpty else { throw ModelRefreshError.noCredential }
+                return models
+            }
             guard let key = modelFetchAPIKey(for: instance) else {
                 throw ModelRefreshError.noCredential
             }

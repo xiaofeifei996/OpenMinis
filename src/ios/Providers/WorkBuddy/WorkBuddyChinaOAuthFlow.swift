@@ -242,41 +242,51 @@ enum WorkBuddyChinaOAuthFlow {
         )
     }
 
-    /// Fetch the account-scoped model catalog used by WorkBuddy's model picker.
-    /// The generic OpenAI-compatible /v2/models endpoint may only expose `auto`.
+    /// Fetch the same account-scoped model catalog used by WorkBuddy's picker.
+    /// WorkBuddy returns model IDs in agents[].models, with display metadata in models[].
     static func fetchModels(accessToken: String, session: URLSession = .shared) async throws -> [LLMModel] {
         let payload = try await requestJSON(
-            path: "/v3/config?repos=",
+            path: "/v3/config",
             method: "GET",
             headers: [
-                "Authorization": "Bearer \(accessToken)",
+                "Authorization": "Bearer \\(accessToken)",
                 "X-Domain": endpoint.host ?? "copilot.tencent.com",
+                "X-Product": "SaaS",
+                "X-IDE-Type": "WorkBuddy",
+                "X-IDE-Name": "WorkBuddy",
+                "X-IDE-Version": "5.5.6",
+                "X-Requested-With": "XMLHttpRequest",
+                "X-Agent-Intent": "craft",
+                "X-Agent-Purpose": "conversation",
+                // The bare WorkBuddy user-agent receives the IDE config,
+                // which does not contain the CLI model picker. Match Apelin/kwwk.
+                "User-Agent": "CLI/2.0.0 WorkBuddy/5.5.6",
+                "Accept": "application/json",
                 "X-No-Enterprise-Id": "true",
                 "X-No-Department-Info": "true"
             ],
             body: nil,
             session: session
         )
-        let agents = payload["agents"] as? [String: Any]
-        let cli = agents?["cli"] as? [String: Any]
-        let rawModels = (cli?["models"] as? [[String: Any]])
-            ?? (payload["models"] as? [[String: Any]])
-            ?? (agents?.values.compactMap { ($0 as? [String: Any])?["models"] as? [[String: Any]] }.first)
-            ?? []
+
+        let agents = payload["agents"] as? [[String: Any]] ?? []
+        let modelIDs = agents.first(where: { ($0["name"] as? String) == "cli" })?["models"] as? [String] ?? []
+        let details = payload["models"] as? [[String: Any]] ?? []
         var seen = Set<String>()
-        return rawModels.compactMap { item in
-            let rawID = (item["id"] ?? item["model"] ?? item["name"]) as? String
-            guard let id = rawID?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !id.isEmpty, id.count <= 256, seen.insert(id).inserted else { return nil }
-            let rawName = (item["displayName"] ?? item["name"] ?? item["title"]) as? String
-            let name = rawName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return modelIDs.compactMap { id in
+            guard !id.isEmpty, id.count <= 256, seen.insert(id).inserted else { return nil }
+            let detail = details.first(where: { ($0["id"] as? String) == id }) ?? [:]
+            let displayName = (detail["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? id
+            let reasoning = detail["reasoning"] as? [String: Any]
+            let supportsReasoning = !(reasoning?["supportedEfforts"] as? [String] ?? []).isEmpty
+            let contextWindow = (detail["maxInputTokens"] as? Int).flatMap { $0 > 0 ? $0 : nil } ?? 168_000
             return LLMModel(
                 id: id,
-                displayName: (name?.isEmpty == false) ? (name ?? id) : id,
+                displayName: displayName,
                 provider: "WorkBuddy 中国版",
                 modalityOverride: .textOnly,
-                contextWindow: 168_000,
-                supportsReasoning: false
+                contextWindow: contextWindow,
+                supportsReasoning: supportsReasoning
             )
         }
     }

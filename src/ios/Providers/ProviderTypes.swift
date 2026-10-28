@@ -82,9 +82,8 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
             // These OAuth branches all reach a real /models endpoint.
             return true
         case .workBuddyChina:
-            // WorkBuddy OAuth is available, but its model catalog is not yet
-            // verified against the account-scoped /models response.
-            return false
+            // Fetch the account-scoped catalog from WorkBuddy /v3/config.
+            return true
         case .openAI:
             // OpenAIModelsAPI.fetchModelsOAuth() is a compiled-in list.
             return false

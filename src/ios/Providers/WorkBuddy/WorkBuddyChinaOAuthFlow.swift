@@ -246,13 +246,19 @@ enum WorkBuddyChinaOAuthFlow {
 
     /// Fetch the same account-scoped model catalog used by WorkBuddy's picker.
     /// WorkBuddy returns model IDs in agents[].models, with display metadata in models[].
-    static func fetchModels(accessToken: String, session: URLSession = .shared) async throws -> [LLMModel] {
+    static func fetchModels(
+        accessToken: String,
+        userID: String? = nil,
+        domain: String? = nil,
+        enterpriseID: String? = nil,
+        session: URLSession = .shared
+    ) async throws -> [LLMModel] {
         let payload = try await requestJSON(
             path: "/v3/config",
             method: "GET",
             headers: [
                 "Authorization": "Bearer \\(accessToken)",
-                "X-Domain": endpoint.host ?? "copilot.tencent.com",
+                "X-Domain": (domain?.isEmpty == false ? domain! : (endpoint.host ?? "copilot.tencent.com")),
                 "X-Product": "SaaS",
                 "X-IDE-Type": "WorkBuddy",
                 "X-IDE-Name": "WorkBuddy",
@@ -266,7 +272,8 @@ enum WorkBuddyChinaOAuthFlow {
                 "Accept": "application/json",
                 "X-No-Enterprise-Id": "true",
                 "X-No-Department-Info": "true"
-            ],
+            ].merging(userID.map { ["X-User-Id": $0] } ?? [:]) { _, new in new }
+             .merging(enterpriseID.map { ["X-Enterprise-Id": $0, "X-Tenant-Id": $0] } ?? [:]) { _, new in new },
             body: nil,
             session: session
         )

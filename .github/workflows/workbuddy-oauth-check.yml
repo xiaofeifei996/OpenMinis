@@ -57,7 +57,7 @@ jobs:
           test -f src/ios/Configs/ProviderCustomization.xcconfig.example
           echo "Xcode project and customization template are present."
           if [ ! -f src/ios/Configs/ProviderCustomization.xcconfig ]; then
-            echo "::notice::Full app build requires generating src/ios/Configs/ProviderCustomization.xcconfig from the example."
+            echo "::notice::Full app build will generate ProviderCustomization.xcconfig from the example."
           fi
           for framework in \
             deps/frameworks/FFmpeg.xcframework \
@@ -75,10 +75,10 @@ jobs:
           done
 
   ios-build:
-    if: github.event_name == 'workflow_dispatch' && inputs.run_full_ios_build
-    name: Full iOS app build (Xcode, manual opt-in)
+    if: (github.event_name == 'workflow_dispatch' && inputs.run_full_ios_build) || github.event_name == 'push'
+    name: Full iOS app build (Xcode)
     runs-on: macos-15
-    timeout-minutes: 100
+    timeout-minutes: 120
     steps:
       - name: Checkout repository and submodules
         uses: actions/checkout@v4
@@ -91,8 +91,6 @@ jobs:
           set -euo pipefail
           xcodebuild -version
           brew install ninja llvm lld libarchive pkg-config meson go
-          # iSH's cross-build uses clang with -fuse-ld=lld. Homebrew ships
-          # LLD as a separate formula, so add both keg-only tool directories.
           LLVM_PREFIX="$(brew --prefix llvm)"
           LLD_PREFIX="$(brew --prefix lld)"
           echo "$LLVM_PREFIX/bin" >> "$GITHUB_PATH"
@@ -126,5 +124,22 @@ jobs:
             -scheme Minis \
             -configuration Debug \
             -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+      - name: Package unsigned iOS app
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="build/DerivedData/Build/Products/Debug-iphoneos/Minis.app"
+          test -d "$APP_PATH"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" build/OpenMinis-WorkBuddy-iOS-unsigned-app.zip
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenMinis-WorkBuddy-iOS-unsigned-app
+          path: build/OpenMinis-WorkBuddy-iOS-unsigned-app.zip
+          if-no-files-found: error
+          retention-days: 7

@@ -270,8 +270,8 @@ enum WorkBuddyChinaOAuthFlow {
                 // which does not contain the CLI model picker. Match Apelin/kwwk.
                 "User-Agent": "CLI/2.0.0 WorkBuddy/5.5.6",
                 "Accept": "application/json",
-                "X-No-Enterprise-Id": "true",
-                "X-No-Department-Info": "true"
+                // Model catalog requests must carry the signed-in account identity
+                // rather than suppressing enterprise context as the login polls do.
             ].merging(userID.map { ["X-User-Id": $0] } ?? [:]) { _, new in new }
              .merging(enterpriseID.map { ["X-Enterprise-Id": $0, "X-Tenant-Id": $0] } ?? [:]) { _, new in new },
             body: nil,

@@ -22,7 +22,7 @@ permissions:
 jobs:
   swift-parse:
     name: Validate WorkBuddy OAuth Swift syntax
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -77,7 +77,7 @@ jobs:
   ios-build:
     if: (github.event_name == 'workflow_dispatch' && inputs.run_full_ios_build) || github.event_name == 'push'
     name: Full iOS app build (Xcode)
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 120
     steps:
       - name: Checkout repository and submodules

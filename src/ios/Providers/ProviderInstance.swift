@@ -186,7 +186,7 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
         switch providerType {
         case .openAI, .openAIResponses, .openRouter, .xAI, .kimiCode, .githubCopilot:
             return OpenCodeChannel.looksLikeOpenCodeBaseURL(effectiveCustomBaseURL)
-        case .anthropic, .gemini, .antigravity, .unsupported:
+        case .anthropic, .gemini, .antigravity, .workBuddyChina, .unsupported:
             return false
         }
     }
@@ -355,7 +355,7 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
             return ProviderKeychainHelper.loadOAuthToken(
                 instanceId: id, as: CopilotTokenStorage.self, caller: "hasAnyCredential"
             )?.githubToken.isEmpty == false
-        case .antigravity, .openRouter, .unsupported:
+        case .antigravity, .openRouter, .workBuddyChina, .unsupported:
             // unsupported = synced from a newer build; no usable credential here.
             // antigravity stores its token via AntigravityOAuthManager (no
             // standalone Codable used by the diagnostic); OpenRouter is

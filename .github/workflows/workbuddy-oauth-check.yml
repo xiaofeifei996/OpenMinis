@@ -75,7 +75,7 @@ jobs:
           done
 
   ios-build:
-    if: (github.event_name == 'workflow_dispatch' && inputs.run_full_ios_build) || github.event_name == 'push'
+    if: (github.event_name == 'workflow_dispatch' && inputs.run_full_ios_build) || github.event_name == 'push' || github.event_name == 'pull_request'
     name: Full iOS app build (Xcode)
     runs-on: macos-26
     timeout-minutes: 120
@@ -146,8 +146,9 @@ jobs:
 
           test -d "$APP_PATH"
           test -f "$APP_PATH/Info.plist"
-          # The app uses App Group storage at startup. Keep the entitlement in the
-          # ad-hoc signature so TrollStore installs can resolve the shared container.
+          mkdir -p "$GITHUB_WORKSPACE/build"
+          # The app uses App Group storage at startup. Verify the built app has
+          # the group entitlement before packaging it for TrollStore.
           codesign -d --entitlements :- "$APP_PATH" > "$GITHUB_WORKSPACE/build/app-entitlements.plist" 2>/dev/null
           /usr/libexec/PlistBuddy -c "Print :com.apple.security.application-groups:0" "$GITHUB_WORKSPACE/build/app-entitlements.plist" | grep -Fxq "group.com.openminis.app"
           rm -rf "$IPA_ROOT" "$IPA_PATH"
@@ -155,7 +156,6 @@ jobs:
           ditto "$APP_PATH" "$IPA_ROOT/Payload/Minis.app"
           (cd "$IPA_ROOT" && /usr/bin/zip -qry "$GITHUB_WORKSPACE/$IPA_PATH" Payload)
 
-          # Verify the archive has the exact layout expected by IPA installers.
           /usr/bin/unzip -Z1 "$IPA_PATH" | grep -Fxq "Payload/Minis.app/Info.plist"
           /usr/bin/unzip -Z1 "$IPA_PATH" | grep -Eq '^Payload/Minis.app/[^/]+$'
           echo "Created IPA with Payload/Minis.app/Info.plist"

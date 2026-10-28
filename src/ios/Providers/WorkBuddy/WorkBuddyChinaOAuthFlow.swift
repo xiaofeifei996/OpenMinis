@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import SafariServices
 
 /// WorkBuddy China browser-login flow.
 ///
@@ -121,7 +122,7 @@ enum WorkBuddyChinaOAuthFlow {
         throw FlowError.timeout
     }
 
-    /// Open the authorization URL using the system browser.
+    /// Present WorkBuddy authorization in an in-app Safari sheet instead of leaving the app.
     struct Account: Sendable {
         let userID: String
         let nickname: String?
@@ -324,7 +325,22 @@ enum WorkBuddyChinaOAuthFlow {
 
     @MainActor
     static func openAuthorizationPage(_ login: LoginState) {
-        UIApplication.shared.open(login.authorizationURL)
+        guard let presenter = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .flatMap({ $0.windows })
+            .first(where: \.isKeyWindow)?
+            .rootViewController else {
+            UIApplication.shared.open(login.authorizationURL)
+            return
+        }
+
+        var topController = presenter
+        while let presented = topController.presentedViewController {
+            topController = presented
+        }
+        let safari = SFSafariViewController(url: login.authorizationURL)
+        safari.dismissButtonStyle = .close
+        topController.present(safari, animated: true)
     }
 
     /// WorkBuddy may return lifetimes in seconds or absolute expiry timestamps.

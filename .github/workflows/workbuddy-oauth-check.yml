@@ -85,12 +85,18 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Select Go toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.5'
+          check-latest: false
+
       - name: Select Xcode and install build tools
         shell: bash
         run: |
           set -euo pipefail
           xcodebuild -version
-          brew install ninja llvm lld libarchive pkg-config meson go
+          brew install ninja llvm lld libarchive pkg-config meson
           LLVM_PREFIX="$(brew --prefix llvm)"
           LLD_PREFIX="$(brew --prefix lld)"
           echo "$LLVM_PREFIX/bin" >> "$GITHUB_PATH"

@@ -78,6 +78,10 @@ enum LLMProviderFactory {
             return openCode(makeKimiProvider(instance: instance, model: entry.model))
         case .githubCopilot:
             return openCode(makeCopilotProvider(instance: instance, model: entry.model))
+        case .workBuddyChina:
+            return openCode(makeWorkBuddyChinaProvider(instance: instance, model: entry.model))
+        case .raccoon:
+            return openCode(makeRaccoonProvider(instance: instance, model: entry.model))
         case .unsupported:
             throw FactoryError.voiceOnlyProvider
         }
@@ -362,6 +366,108 @@ enum LLMProviderFactory {
     /// body, which is the first point that knows whether this turn is
     /// agent-driven and whether images are attached. Before this, the per-request
     /// headers were computed by a function nothing called, so they never shipped.
+    /// Tencent WorkBuddy China uses an OpenAI-compatible streaming endpoint.
+    /// The endpoint already contains /v2, so /v1 must not be appended.
+    /// OAuth login and account-bound headers are handled separately; this
+    /// builder also honors a manually supplied bearer token for testing.
+    static func makeWorkBuddyChinaProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
+        let instanceId = instance.id
+        let provider: OpenAIProvider
+        if instance.credentialType == .oauth {
+            provider = OpenAIProvider(
+                oauthTokenProvider: {
+                    try await WorkBuddyChinaOAuthManager.shared.validAccessToken(instanceId: instanceId)
+                },
+                model: model
+            )
+        } else {
+            let token = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) ?? ""
+            provider = OpenAIProvider(
+                apiKey: token,
+                model: model,
+                customBaseURL: instance.effectiveCustomBaseURL ?? "https://copilot.tencent.com/v2",
+                appendV1Suffix: false
+            )
+        }
+        provider.customBaseURL = instance.effectiveCustomBaseURL ?? "https://copilot.tencent.com/v2"
+        provider.appendV1Suffix = false
+        provider.extraHeaders.merge([
+            "User-Agent": "WorkBuddy/5.5.6",
+            "X-Product": "SaaS",
+            "X-IDE-Type": "WorkBuddy",
+            "X-IDE-Name": "WorkBuddy",
+            "X-IDE-Version": "5.5.6",
+            "X-Requested-With": "XMLHttpRequest",
+            "X-Agent-Intent": "craft",
+            "X-Agent-Purpose": "conversation"
+        ]) { _, new in new }
+        // WorkBuddy's gateway expects request identifiers in the desktop client's
+        // chat headers. This provider hook runs for each outbound request.
+        provider.perRequestHeaders = { _ in
+            let requestID = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+            return [
+                "X-Conversation-Message-ID": requestID,
+                "X-Request-ID": requestID,
+                "X-Conversation-Request-ID": UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+            ]
+        }
+        if instance.credentialType == .oauth {
+            if let userID = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id, account: "workbuddy-user-id"
+            ), !userID.isEmpty {
+                provider.extraHeaders["X-User-Id"] = userID
+            }
+            if let domain = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id, account: "workbuddy-domain"
+            ), !domain.isEmpty {
+                provider.extraHeaders["X-Domain"] = domain
+            }
+            if let enterpriseID = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id, account: "workbuddy-enterprise-id"
+            ), !enterpriseID.isEmpty {
+                provider.extraHeaders["X-Enterprise-Id"] = enterpriseID
+                provider.extraHeaders["X-Tenant-Id"] = enterpriseID
+            }
+        }
+        return provider
+    }
+
+    /// SenseTime Raccoon (小浣熊) — OpenAI-compatible Chat Completions at
+    /// `https://xiaohuanxiong.com/api/web/llm/v2/chat/completions`.
+    ///
+    /// The upstream base already ends in `/v2`, so `/v1` must NOT be appended.
+    /// A manually pasted bearer token (the vendor's own web client shows one)
+    /// wins over the managed OAuth session, mirroring the other OpenAI-family
+    /// builders — that is what lets a user try the provider without the
+    /// browser flow.
+    static func makeRaccoonProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
+        let iid = instance.id
+        let base = instance.effectiveCustomBaseURL ?? RaccoonOAuthFlow.llmBase
+        let provider: OpenAIProvider
+        if let manual = ProviderKeychainHelper.loadOAuthString(
+            instanceId: iid, account: "manual-oauth-token"
+        ), !manual.isEmpty {
+            provider = OpenAIProvider(
+                apiKey: manual, model: model, customBaseURL: base, appendV1Suffix: false)
+        } else {
+            provider = OpenAIProvider(
+                oauthTokenProvider: { try await RaccoonOAuthManager.shared.validAccessToken(instanceId: iid) },
+                model: model
+            )
+            // The OAuth branch of the initializer leaves these at their defaults
+            // (no base, /v1 appended) which would target api.openai.com.
+            provider.customBaseURL = base
+            provider.appendV1Suffix = false
+        }
+        // The gateway distinguishes the desktop client from the website on
+        // these headers; without them it answers as a browser session.
+        provider.extraHeaders.merge([
+            "User-Agent": RaccoonOAuthFlow.userAgent,
+            "Accept": "*/*",
+        ]) { _, new in new }
+        return provider
+    }
+
     static func makeCopilotProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
         let iid = instance.id
         let provider = OpenAIProvider(

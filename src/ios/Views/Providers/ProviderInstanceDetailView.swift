@@ -653,6 +653,8 @@ struct ProviderInstanceDetailView: View {
         case .xAI: return "https://api.x.ai/v1"
         case .kimiCode: return "https://api.kimi.com/coding"
         case .githubCopilot: return CopilotConstants.apiBaseURL
+        case .workBuddyChina: return "https://copilot.tencent.com/v2"
+        case .raccoon: return RaccoonOAuthFlow.llmBase
         case .unsupported: return "—"
         }
     }
@@ -1093,6 +1095,8 @@ struct ProviderInstanceDetailView: View {
         case .xAI: return XAIOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .kimiCode: return KimiOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .githubCopilot: return CopilotOAuthManager.shared.isAuthenticated(instanceId: instance.id)
+        case .workBuddyChina: return false // dedicated WorkBuddy China OAuth flow
+        case .raccoon: return RaccoonOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .unsupported: return false // synced from newer build
         }
     }
@@ -1157,6 +1161,16 @@ struct ProviderInstanceDetailView: View {
         case .githubCopilot:
             return CopilotOAuthManager.shared.isAuthenticated(instanceId: instance.id)
                 ? AppLocalized("Authenticated") : AppLocalized("Not authenticated")
+        case .workBuddyChina:
+            return "使用WorkBuddy 登录"
+        case .raccoon:
+            guard RaccoonOAuthManager.shared.isAuthenticated(instanceId: instance.id) else {
+                return AppLocalized("Not authenticated")
+            }
+            return [RaccoonOAuthManager.shared.maskedToken(instanceId: instance.id),
+                    RaccoonOAuthManager.shared.accountID(instanceId: instance.id).map { "ID: \($0.prefix(8))" }]
+                .compactMap { $0 }
+                .joined(separator: " · ")
         case .unsupported:
             return AppLocalized("Unsupported in this app version")
         }
@@ -1173,6 +1187,8 @@ struct ProviderInstanceDetailView: View {
         case .xAI: return AppLocalized("Sign in with xAI")
         case .kimiCode: return AppLocalized("Sign in with Kimi Code")
         case .githubCopilot: return AppLocalized("Sign in with GitHub")
+        case .workBuddyChina: return "使用WorkBuddy 登录"
+        case .raccoon: return "使用小浣熊账号登录"
         case .unsupported: return AppLocalized("Sign In")
         }
     }
@@ -1189,6 +1205,8 @@ struct ProviderInstanceDetailView: View {
             case .xAI: try await XAIOAuthManager.shared.login(instanceId: instance.id)
             case .kimiCode: break // device-code flow runs in KimiDeviceLoginSheet
             case .githubCopilot: break // device-code flow runs in CopilotDeviceLoginSheet
+            case .workBuddyChina: break // dedicated WorkBuddy China sign-in flow is launched by the view
+            case .raccoon: try await RaccoonOAuthManager.shared.login(instanceId: instance.id)
             case .unsupported: break
             }
             // [T-provider-oauth-model-discovery] Reconcile models on a
@@ -1237,6 +1255,8 @@ struct ProviderInstanceDetailView: View {
         case .xAI: XAIOAuthManager.shared.logout(instanceId: instance.id)
         case .kimiCode: KimiOAuthManager.shared.logout(instanceId: instance.id)
         case .githubCopilot: CopilotOAuthManager.shared.logout(instanceId: instance.id)
+        case .workBuddyChina: break // dedicated WorkBuddy China credentials are managed by its OAuth flow
+        case .raccoon: RaccoonOAuthManager.shared.logout(instanceId: instance.id)
         case .unsupported: break
         }
     }
@@ -1262,6 +1282,10 @@ struct ProviderInstanceDetailView: View {
             token = try? await KimiOAuthManager.shared.validAccessToken(instanceId: instance.id)
         case .githubCopilot:
             token = try? await CopilotOAuthManager.shared.validSessionToken(instanceId: instance.id)
+        case .workBuddyChina:
+            token = nil // token export is handled by the dedicated WorkBuddy China flow
+        case .raccoon:
+            token = try? await RaccoonOAuthManager.shared.validAccessToken(instanceId: instance.id)
         case .unsupported:
             token = nil
         }
@@ -1279,6 +1303,8 @@ struct ProviderInstanceDetailView: View {
         case .xAI: return "xai-..."
         case .kimiCode: return "" // OAuth only
         case .githubCopilot: return "" // OAuth only
+        case .workBuddyChina: return "" // OAuth only
+        case .raccoon: return "" // OAuth only
         case .antigravity: return "API Key..."
         case .openRouter: return "sk-or-..."
         case .openAIResponses: return "sk-..."

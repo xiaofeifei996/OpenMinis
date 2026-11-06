@@ -216,9 +216,24 @@ final class TestSession: ObservableObject {
             let messages = [LLMMessage(
                 role: .user,
                 content: "Hi! I'm setting you up in Minis. Say hello back in one short, friendly sentence.")]
-            let resp = try await provider.sendMessage(
-                messages: messages, systemPrompt: nil, maxTokens: 128, temperature: nil)
-            let text = resp.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let responseText: String
+            // WorkBuddy's gateway rejects non-stream chat requests (code 11101),
+            // while normal conversation uses the streaming endpoint successfully.
+            // Quick Test must exercise the same streaming path for this provider.
+            if ProviderConfigStore.shared.instance(for: entry.providerInstanceId)?.providerType == .workBuddyChina {
+                let stream = try await provider.streamMessage(
+                    messages: messages, systemPrompt: nil, maxTokens: 128, temperature: nil)
+                var accumulated = ""
+                for try await chunk in stream {
+                    if case .text(let delta) = chunk { accumulated += delta }
+                }
+                responseText = accumulated
+            } else {
+                let resp = try await provider.sendMessage(
+                    messages: messages, systemPrompt: nil, maxTokens: 128, temperature: nil)
+                responseText = resp.text
+            }
+            let text = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
             return .text(text.isEmpty ? AppLocalized("(empty reply)") : text)
 
         case .imageGen:

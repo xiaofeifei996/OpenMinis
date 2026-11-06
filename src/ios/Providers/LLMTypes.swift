@@ -843,6 +843,14 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
             supportedModalities: ProviderType.githubCopilot.defaultModality,
             supportedAuth: [.oauth]
         ),
+        // SenseTime Raccoon (小浣熊). Same reasoning as the three above: its
+        // models are served by an OpenAI-compatible gateway and accept images,
+        // but the provider string is this app's own label, so without a row the
+        // lookup MISSES and every model silently reads as text-only.
+        "小浣熊": ModelCapabilities(
+            supportedModalities: ProviderType.raccoon.defaultModality,
+            supportedAuth: [.oauth]
+        ),
     ]
 
     /// Default capabilities when the provider is unknown.

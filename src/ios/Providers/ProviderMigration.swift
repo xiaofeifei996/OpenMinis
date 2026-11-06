@@ -94,6 +94,9 @@ enum ProviderMigration {
             case .workBuddyChina:
                 // WorkBuddy China uses its own OAuth flow; no legacy singleton token.
                 break
+            case .raccoon:
+                // Raccoon (小浣熊) is new as well; no legacy singleton token.
+                break
             case .unsupported:
                 break
             }

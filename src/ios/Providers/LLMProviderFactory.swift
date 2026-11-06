@@ -80,6 +80,8 @@ enum LLMProviderFactory {
             return openCode(makeCopilotProvider(instance: instance, model: entry.model))
         case .workBuddyChina:
             return openCode(makeWorkBuddyChinaProvider(instance: instance, model: entry.model))
+        case .raccoon:
+            return openCode(makeRaccoonProvider(instance: instance, model: entry.model))
         case .unsupported:
             throw FactoryError.voiceOnlyProvider
         }
@@ -427,6 +429,42 @@ enum LLMProviderFactory {
                 provider.extraHeaders["X-Tenant-Id"] = enterpriseID
             }
         }
+        return provider
+    }
+
+    /// SenseTime Raccoon (小浣熊) — OpenAI-compatible Chat Completions at
+    /// `https://xiaohuanxiong.com/api/web/llm/v2/chat/completions`.
+    ///
+    /// The upstream base already ends in `/v2`, so `/v1` must NOT be appended.
+    /// A manually pasted bearer token (the vendor's own web client shows one)
+    /// wins over the managed OAuth session, mirroring the other OpenAI-family
+    /// builders — that is what lets a user try the provider without the
+    /// browser flow.
+    static func makeRaccoonProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
+        let iid = instance.id
+        let base = instance.effectiveCustomBaseURL ?? RaccoonOAuthFlow.llmBase
+        let provider: OpenAIProvider
+        if let manual = ProviderKeychainHelper.loadOAuthString(
+            instanceId: iid, account: "manual-oauth-token"
+        ), !manual.isEmpty {
+            provider = OpenAIProvider(
+                apiKey: manual, model: model, customBaseURL: base, appendV1Suffix: false)
+        } else {
+            provider = OpenAIProvider(
+                oauthTokenProvider: { try await RaccoonOAuthManager.shared.validAccessToken(instanceId: iid) },
+                model: model
+            )
+            // The OAuth branch of the initializer leaves these at their defaults
+            // (no base, /v1 appended) which would target api.openai.com.
+            provider.customBaseURL = base
+            provider.appendV1Suffix = false
+        }
+        // The gateway distinguishes the desktop client from the website on
+        // these headers; without them it answers as a browser session.
+        provider.extraHeaders.merge([
+            "User-Agent": RaccoonOAuthFlow.userAgent,
+            "Accept": "*/*",
+        ]) { _, new in new }
         return provider
     }
 

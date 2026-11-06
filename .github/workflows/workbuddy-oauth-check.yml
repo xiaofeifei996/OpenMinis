@@ -41,6 +41,8 @@ jobs:
           for file in \
             src/ios/Providers/WorkBuddy/WorkBuddyChinaOAuthFlow.swift \
             src/ios/Providers/WorkBuddy/WorkBuddyChinaOAuthManager.swift \
+            src/ios/Providers/Raccoon/RaccoonOAuthFlow.swift \
+            src/ios/Providers/Raccoon/RaccoonOAuthManager.swift \
             src/ios/Providers/LLMProviderFactory.swift \
             src/ios/Views/Providers/AddProviderView.swift \
             src/ios/Providers/ProviderTypes.swift

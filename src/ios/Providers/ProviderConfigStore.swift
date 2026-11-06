@@ -3326,6 +3326,19 @@ final class ProviderConfigStore: ObservableObject {
             )
             guard !models.isEmpty else { throw ModelRefreshError.noCredential }
             return models
+        case (.raccoon, _):
+            // SenseTime Raccoon: the account-scoped /model_catalog is the only
+            // source of usable ids, for both the OAuth session and a manually
+            // pasted bearer. No compiled-in fallback exists on purpose.
+            let token: String
+            if let manual = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id, account: "manual-oauth-token"
+            ), !manual.isEmpty {
+                token = manual
+            } else {
+                token = try await RaccoonOAuthManager.shared.validAccessToken(instanceId: instance.id)
+            }
+            return try await RaccoonOAuthFlow.fetchModels(accessToken: token)
         case (.githubCopilot, _):
             // [T-copilot-provider] Always the OAuth path — there is no API-key
             // form of Copilot. The session token is minted on demand, so a
@@ -3515,6 +3528,7 @@ final class ProviderConfigStore: ObservableObject {
         case .kimiCode: return "https://api.kimi.com/coding"
         case .githubCopilot: return CopilotConstants.apiBaseURL
         case .workBuddyChina: return "https://copilot.tencent.com/v2"
+        case .raccoon: return RaccoonOAuthFlow.llmBase
         case .gemini: return "https://generativelanguage.googleapis.com"
         case .openRouter: return "https://openrouter.ai/api"
         case .antigravity: return nil // No public base URL

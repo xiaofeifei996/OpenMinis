@@ -993,6 +993,7 @@ struct AddProviderView: View {
         case .kimiCode: return "https://api.kimi.com/coding"
         case .githubCopilot: return CopilotConstants.apiBaseURL
         case .workBuddyChina: return "https://copilot.tencent.com/v2"
+        case .raccoon: return RaccoonOAuthFlow.llmBase
         default: return "https://api.example.com"
         }
     }
@@ -1081,6 +1082,11 @@ struct AddProviderView: View {
             // [T-copilot-provider] Same shape — the device flow lives in
             // CopilotDeviceLoginSheet so the risk notice is shown before it starts.
             case .githubCopilot: break
+            case .raccoon:
+                // Browser sign-in → authorization code → tokens. The manager
+                // persists the credential under the same Keychain accounts the
+                // request path and the model catalog read.
+                try await RaccoonOAuthManager.shared.login(instanceId: pendingInstanceId)
             case .workBuddyChina:
                 let login = try await WorkBuddyChinaOAuthFlow.begin()
                 await WorkBuddyChinaOAuthFlow.openAuthorizationPage(login)
@@ -1173,6 +1179,9 @@ struct AddProviderView: View {
             token = ProviderKeychainHelper.loadOAuthToken(instanceId: pendingInstanceId, as: KimiTokenStorage.self)?.accessToken
         case .workBuddyChina:
             token = ProviderKeychainHelper.loadOAuthString(instanceId: pendingInstanceId, account: "manual-oauth-token")
+        case .raccoon:
+            token = ProviderKeychainHelper.loadOAuthString(
+                instanceId: pendingInstanceId, account: RaccoonOAuthManager.Account.access)
         case .githubCopilot:
             // The GitHub token is the credential worth showing; the session
             // token is derived and rotates every ~25 minutes.
@@ -1214,6 +1223,10 @@ struct AddProviderView: View {
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-access-expiry")
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-refresh-expiry")
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-enterprise-id")
+                for account in [RaccoonOAuthManager.Account.access, RaccoonOAuthManager.Account.refresh,
+                                RaccoonOAuthManager.Account.expiry, RaccoonOAuthManager.Account.userID] {
+                    ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: account)
+                }
                 // OpenRouter OAuth stores a permanent API key, not an OAuth token
                 if selectedType == .openRouter {
                     ProviderKeychainHelper.deleteAPIKey(instanceId: pendingInstanceId)
@@ -1264,6 +1277,7 @@ struct AddProviderView: View {
         case .kimiCode: return AppLocalized("Sign in with Kimi Code")
         case .githubCopilot: return AppLocalized("Sign in with GitHub")
         case .workBuddyChina: return "使用WorkBuddy 登录"
+        case .raccoon: return "使用小浣熊账号登录"
         case .unsupported: return AppLocalized("Sign In")
         }
     }
@@ -1281,6 +1295,7 @@ struct AddProviderView: View {
         case .kimiCode: return "" // OAuth only
         case .githubCopilot: return "" // OAuth only
         case .workBuddyChina: return "WorkBuddy access token"
+        case .raccoon: return "xiaohuanxiong.com access token"
         case .unsupported: return ""
         }
     }
@@ -1297,6 +1312,7 @@ struct AddProviderView: View {
         case .kimiCode: return "Kimi Code"
         case .githubCopilot: return "GitHub Copilot"
         case .workBuddyChina: return "WorkBuddy 中国版"
+        case .raccoon: return "小浣熊（商汤）"
         case .unsupported: return AppLocalized("Unsupported")
         }
     }
@@ -1328,6 +1344,11 @@ struct AddProviderView: View {
         case .githubCopilot:
             return [.oauth]
         case .workBuddyChina:
+            return [.oauth]
+        case .raccoon:
+            // The supported path is the account sign-in; the "Or Configure
+            // Manually" block still accepts a bearer token copied out of the
+            // vendor's own web client, which the factory honours first.
             return [.oauth]
         case .openAIResponses, .gemini:
             return [.apiKey]
@@ -1366,6 +1387,10 @@ struct AddProviderView: View {
             return "打开WorkBuddy 登录"
         case (.workBuddyChina, .apiKey):
             return AppLocalized("WorkBuddy China requires an account access token and account headers.")
+        case (.raccoon, .oauth):
+            return "使用小浣熊（商汤）账号登录。非官方接口，可能随时变更；请遵守上游条款，勿用于批量或商业用途。"
+        case (.raccoon, .apiKey):
+            return "粘贴 xiaohuanxiong.com 网页端请求头里的 Bearer token。"
         case (.githubCopilot, _):
             // [T-copilot-provider] The risk warning belongs where the user
             // decides, not only inside the sign-in sheet.
@@ -1405,6 +1430,9 @@ struct AddProviderView: View {
         case .workBuddyChina:
             Image(systemName: "bubble.left.and.bubble.right")
                 .foregroundStyle(.blue)
+        case .raccoon:
+            Image(systemName: "pawprint.fill")
+                .foregroundStyle(.orange)
         case .githubCopilot:
             Image(systemName: "chevron.left.forwardslash.chevron.right")
                 .foregroundStyle(.primary)
@@ -1426,6 +1454,7 @@ struct AddProviderView: View {
         case .kimiCode: return .indigo
         case .githubCopilot: return .primary
         case .workBuddyChina: return .blue
+        case .raccoon: return .orange
         case .unsupported: return .gray
         }
     }

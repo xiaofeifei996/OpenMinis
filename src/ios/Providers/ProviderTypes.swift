@@ -27,6 +27,11 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
     case githubCopilot
     /// Tencent WorkBuddy China. OpenAI-compatible chat endpoint with WorkBuddy-specific headers.
     case workBuddyChina
+    /// SenseTime Raccoon (商汤「小浣熊」). OpenAI-compatible gateway at
+    /// xiaohuanxiong.com, signed into with the desktop client's authorization
+    /// code flow. Opt-in and unofficial: the app is not affiliated with the
+    /// vendor and the flow can change without notice.
+    case raccoon
     /// Sentinel for a provider type this app build doesn't recognize — e.g. a
     /// NEWER build synced an instance whose `provider_type` string isn't a known
     /// case here. We DECODE to this instead of throwing/dropping, so the instance
@@ -53,6 +58,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .kimiCode: return "Kimi Code"
         case .githubCopilot: return "GitHub Copilot"
         case .workBuddyChina: return "WorkBuddy 中国版"
+        case .raccoon: return "小浣熊（商汤）"
         case .unsupported: return "Unsupported"
         }
     }
@@ -83,6 +89,10 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
             return true
         case .workBuddyChina:
             // Fetch the account-scoped catalog from WorkBuddy /v3/config.
+            return true
+        case .raccoon:
+            // The account-scoped catalog at /model_catalog is the only source
+            // of usable model ids; nothing is compiled in.
             return true
         case .openAI:
             // OpenAIModelsAPI.fetchModelsOAuth() is a compiled-in list.
@@ -126,6 +136,11 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
                     supportsReasoning: false
                 )
             ]
+        case .raccoon:
+            // Deliberately empty, like Copilot: every usable id comes from the
+            // account's own /model_catalog, so a compiled-in list would only go
+            // stale or offer models the account cannot use.
+            return []
         case .unsupported: return []
         }
     }
@@ -152,6 +167,8 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
             return AppLocalized("Sign in with GitHub — unofficial, use at your own risk")
         case .workBuddyChina:
             return "使用WorkBuddy 登录"
+        case .raccoon:
+            return "使用小浣熊账号登录（非官方接口）"
         case .antigravity:
             return AppLocalized("\(builtInModels.count) built-in models")
         case .unsupported:
@@ -172,6 +189,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .kimiCode: return .vision
         case .githubCopilot: return .vision
         case .workBuddyChina: return .vision
+        case .raccoon: return .vision
         case .unsupported: return .vision
         }
     }

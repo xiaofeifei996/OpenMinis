@@ -1363,6 +1363,10 @@ struct AddProviderView: View {
             return AppLocalized("Supports OpenAI official API and third-party services like OpenRouter, MiniMax, etc.")
         case (.openAIResponses, .apiKey):
             return AppLocalized("Use an API key for a Responses API endpoint")
+        case (.raccoon, .oauth):
+            return "使用小浣熊（商汤）账号登录。非官方接口，可能随时变更；请遵守上游条款，勿用于批量或商业用途。"
+        case (.raccoon, .apiKey):
+            return "粘贴 xiaohuanxiong.com 网页端请求头里的 Bearer token。"
         case (_, .apiKey):
             return AppLocalized("Use an API key from your \(type.displayName) account")
         case (.anthropic, .oauth):
@@ -1387,10 +1391,6 @@ struct AddProviderView: View {
             return "打开WorkBuddy 登录"
         case (.workBuddyChina, .apiKey):
             return AppLocalized("WorkBuddy China requires an account access token and account headers.")
-        case (.raccoon, .oauth):
-            return "使用小浣熊（商汤）账号登录。非官方接口，可能随时变更；请遵守上游条款，勿用于批量或商业用途。"
-        case (.raccoon, .apiKey):
-            return "粘贴 xiaohuanxiong.com 网页端请求头里的 Bearer token。"
         case (.githubCopilot, _):
             // [T-copilot-provider] The risk warning belongs where the user
             // decides, not only inside the sign-in sheet.

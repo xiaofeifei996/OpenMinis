@@ -1181,7 +1181,7 @@ struct AddProviderView: View {
             token = ProviderKeychainHelper.loadOAuthString(instanceId: pendingInstanceId, account: "manual-oauth-token")
         case .raccoon:
             token = ProviderKeychainHelper.loadOAuthString(
-                instanceId: pendingInstanceId, account: RaccoonOAuthManager.Account.access)
+                instanceId: pendingInstanceId, account: RaccoonKeychain.access)
         case .githubCopilot:
             // The GitHub token is the credential worth showing; the session
             // token is derived and rotates every ~25 minutes.
@@ -1223,8 +1223,8 @@ struct AddProviderView: View {
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-access-expiry")
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-refresh-expiry")
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-enterprise-id")
-                for account in [RaccoonOAuthManager.Account.access, RaccoonOAuthManager.Account.refresh,
-                                RaccoonOAuthManager.Account.expiry, RaccoonOAuthManager.Account.userID] {
+                for account in [RaccoonKeychain.access, RaccoonKeychain.refresh,
+                                RaccoonKeychain.expiry, RaccoonKeychain.userID] {
                     ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: account)
                 }
                 // OpenRouter OAuth stores a permanent API key, not an OAuth token

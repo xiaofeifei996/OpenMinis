@@ -359,7 +359,7 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
             // Signed in through the vendor's browser flow; same direct-read
             // shape as the other provider-specific stores.
             return ProviderKeychainHelper.loadOAuthString(
-                instanceId: id, account: "raccoon-access-token", caller: "hasAnyCredential"
+                instanceId: id, account: RaccoonKeychain.access, caller: "hasAnyCredential"
             )?.isEmpty == false
         case .antigravity, .openRouter, .workBuddyChina, .unsupported:
             // unsupported = synced from a newer build; no usable credential here.

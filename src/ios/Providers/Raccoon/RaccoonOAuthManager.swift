@@ -6,6 +6,24 @@ import Foundation
 /// buffer, one in-flight refresh Task per instance (so concurrent turns cannot
 /// rotate the same refresh token twice and lock the account out), and every
 /// failure surfaced as "sign in again" instead of a raw HTTP 401 later.
+/// Keychain account names used by the Raccoon credential store.
+///
+/// Deliberately a top-level enum rather than a nested one: Keychain key
+/// strings are read from non-isolated UI helpers, and a nested type inside a
+/// `@MainActor` class would drag the actor isolation into those call sites.
+///
+/// The access token does NOT live in `manual-oauth-token`. That slot means
+/// "a bearer the user pasted by hand" everywhere else in the app — the
+/// factory prefers it over a managed session and the detail view labels it
+/// "manual token" — so Raccoon's real sign-in gets its own slot, and a pasted
+/// token still wins over it.
+enum RaccoonKeychain {
+    static let access = "raccoon-access-token"
+    static let refresh = "raccoon-refresh-token"
+    static let expiry = "raccoon-access-expiry"
+    static let userID = "raccoon-user-id"
+}
+
 @MainActor
 final class RaccoonOAuthManager {
     static let shared = RaccoonOAuthManager()
@@ -14,19 +32,6 @@ final class RaccoonOAuthManager {
     private let logger = AppLogger(category: "RaccoonOAuth")
     /// Refresh this many seconds before expiry — same as Codex/Claude/Kimi.
     private let refreshBuffer: TimeInterval = 5 * 60
-
-    // Keychain account names. The access token deliberately does NOT live in
-    // `manual-oauth-token`: that slot means "a bearer the user pasted by hand"
-    // everywhere else in the app (the factory prefers it over the managed
-    // session, and the detail view labels it "manual token"). Raccoon has a
-    // real sign-in, so it gets its own slot and the manual slot stays free for
-    // a pasted token, which then wins over the session.
-    enum Account {
-        static let access = "raccoon-access-token"
-        static let refresh = "raccoon-refresh-token"
-        static let expiry = "raccoon-access-expiry"
-        static let userID = "raccoon-user-id"
-    }
 
     private var inFlightRefresh: [String: Task<String, Error>] = [:]
 
@@ -47,26 +52,27 @@ final class RaccoonOAuthManager {
     // MARK: - Status
 
     func isAuthenticated(instanceId: String) -> Bool {
-        ProviderKeychainHelper.loadOAuthString(instanceId: instanceId, account: Account.access)?
+        ProviderKeychainHelper.loadOAuthString(instanceId: instanceId, account: RaccoonKeychain.access)?
             .isEmpty == false
     }
 
     func maskedToken(instanceId: String) -> String? {
         guard let token = ProviderKeychainHelper.loadOAuthString(
-            instanceId: instanceId, account: Account.access
+            instanceId: instanceId, account: RaccoonKeychain.access
         ), token.count > 8 else { return nil }
         return "\(token.prefix(4))…\(token.suffix(4))"
     }
 
     func accountID(instanceId: String) -> String? {
-        ProviderKeychainHelper.loadOAuthString(instanceId: instanceId, account: Account.userID)
+        ProviderKeychainHelper.loadOAuthString(instanceId: instanceId, account: RaccoonKeychain.userID)
     }
 
     /// Sign out: drop every credential this manager wrote.
     func logout(instanceId: String) {
         inFlightRefresh[instanceId]?.cancel()
         inFlightRefresh[instanceId] = nil
-        for account in [Account.access, Account.refresh, Account.expiry, Account.userID] {
+        for account in [RaccoonKeychain.access, RaccoonKeychain.refresh,
+                        RaccoonKeychain.expiry, RaccoonKeychain.userID] {
             ProviderKeychainHelper.deleteOAuthString(instanceId: instanceId, account: account)
         }
         logger.info("logout instanceId=\(instanceId.prefix(8))")
@@ -85,20 +91,20 @@ final class RaccoonOAuthManager {
 
     private func persist(_ credentials: RaccoonOAuthFlow.Credentials, instanceId: String) {
         ProviderKeychainHelper.saveOAuthString(
-            credentials.accessToken, instanceId: instanceId, account: Account.access)
+            credentials.accessToken, instanceId: instanceId, account: RaccoonKeychain.access)
         if !credentials.refreshToken.isEmpty {
             ProviderKeychainHelper.saveOAuthString(
-                credentials.refreshToken, instanceId: instanceId, account: Account.refresh)
+                credentials.refreshToken, instanceId: instanceId, account: RaccoonKeychain.refresh)
         }
         if let expiresAt = credentials.expiresAt {
             ProviderKeychainHelper.saveOAuthString(
-                String(expiresAt), instanceId: instanceId, account: Account.expiry)
+                String(expiresAt), instanceId: instanceId, account: RaccoonKeychain.expiry)
         } else {
-            ProviderKeychainHelper.deleteOAuthString(instanceId: instanceId, account: Account.expiry)
+            ProviderKeychainHelper.deleteOAuthString(instanceId: instanceId, account: RaccoonKeychain.expiry)
         }
         if let userID = credentials.userID, !userID.isEmpty {
             ProviderKeychainHelper.saveOAuthString(
-                userID, instanceId: instanceId, account: Account.userID)
+                userID, instanceId: instanceId, account: RaccoonKeychain.userID)
         }
     }
 
@@ -107,13 +113,13 @@ final class RaccoonOAuthManager {
     /// A usable access token, refreshing first when it is close to expiry.
     func validAccessToken(instanceId: String) async throws -> String {
         guard let access = ProviderKeychainHelper.loadOAuthString(
-            instanceId: instanceId, account: Account.access
+            instanceId: instanceId, account: RaccoonKeychain.access
         ), !access.isEmpty else {
             throw ManagerError.notSignedIn
         }
 
         let expiry = ProviderKeychainHelper.loadOAuthString(
-            instanceId: instanceId, account: Account.expiry
+            instanceId: instanceId, account: RaccoonKeychain.expiry
         ).flatMap(TimeInterval.init)
         if let expiry, expiry > Date().timeIntervalSince1970 + refreshBuffer {
             return access
@@ -159,7 +165,7 @@ final class RaccoonOAuthManager {
 
     private func performRefresh(instanceId: String) async throws -> String {
         guard let refresh = ProviderKeychainHelper.loadOAuthString(
-            instanceId: instanceId, account: Account.refresh
+            instanceId: instanceId, account: RaccoonKeychain.refresh
         ), !refresh.isEmpty else {
             throw ManagerError.notSignedIn
         }
@@ -175,16 +181,16 @@ final class RaccoonOAuthManager {
         }
 
         ProviderKeychainHelper.saveOAuthString(
-            result.accessToken, instanceId: instanceId, account: Account.access)
+            result.accessToken, instanceId: instanceId, account: RaccoonKeychain.access)
         if let rotated = result.refreshToken, !rotated.isEmpty {
             ProviderKeychainHelper.saveOAuthString(
-                rotated, instanceId: instanceId, account: Account.refresh)
+                rotated, instanceId: instanceId, account: RaccoonKeychain.refresh)
         }
         if let expiry = RaccoonJWT.expiry(result.accessToken) {
             ProviderKeychainHelper.saveOAuthString(
-                String(expiry), instanceId: instanceId, account: Account.expiry)
+                String(expiry), instanceId: instanceId, account: RaccoonKeychain.expiry)
         } else {
-            ProviderKeychainHelper.deleteOAuthString(instanceId: instanceId, account: Account.expiry)
+            ProviderKeychainHelper.deleteOAuthString(instanceId: instanceId, account: RaccoonKeychain.expiry)
         }
         logger.info("refreshed instanceId=\(instanceId.prefix(8)) rotated=\(result.refreshToken != nil)")
         return result.accessToken

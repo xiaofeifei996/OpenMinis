@@ -236,7 +236,7 @@ extension AIChatViewModel {
         case .openAI, .openAIResponses:
             // Custom/local base only — never official OpenAI.
             return instance.customBaseURL?.isEmpty == false
-        case .openRouter, .xAI, .kimiCode, .workBuddyChina, .raccoon, .autoClaw, .trae:
+        case .openRouter, .xAI, .kimiCode, .workBuddyChina, .workBuddyAI, .raccoon, .autoClaw, .trae:
             return true
         // [T-copilot-provider] Copilot's /models reports `supports.thinking`
         // per model, so an explicit false there is authoritative — it belongs
@@ -321,7 +321,7 @@ extension AIChatViewModel {
             case .gemini:
                 level = thinkLvl.displayName
             case .openAI, .openAIResponses, .openRouter, .xAI, .kimiCode, .githubCopilot,
-             .workBuddyChina, .raccoon, .autoClaw, .trae:
+             .workBuddyChina, .workBuddyAI, .raccoon, .autoClaw, .trae:
                 level = OpenAIAgentProvider.reasoningEffort(for: model, level: thinkLvl) ?? "—"
             case .unsupported:
                 level = "—"

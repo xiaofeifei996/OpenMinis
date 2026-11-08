@@ -220,7 +220,12 @@ final class TestSession: ObservableObject {
             // WorkBuddy's gateway rejects non-stream chat requests (code 11101),
             // while normal conversation uses the streaming endpoint successfully.
             // Quick Test must exercise the same streaming path for this provider.
-            if ProviderConfigStore.shared.instance(for: entry.providerInstanceId)?.providerType == .workBuddyChina {
+            // WorkBuddy's gateway rejects non-streaming chat (code 11101) on
+            // both builds, while normal conversation streams successfully, so
+            // Quick Test must exercise the same path.
+            let quickTestType = ProviderConfigStore.shared
+                .instance(for: entry.providerInstanceId)?.providerType
+            if quickTestType == .workBuddyChina || quickTestType == .workBuddyAI {
                 let stream = try await provider.streamMessage(
                     messages: messages, systemPrompt: nil, maxTokens: 128, temperature: nil)
                 var accumulated = ""

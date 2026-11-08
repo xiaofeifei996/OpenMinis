@@ -859,6 +859,12 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
         ),
         // Trae (字节跳动). Its models are text-only on this wire — the body
         // carries no image blocks — so the row uses the type's own answer.
+        // WorkBuddy AI（国际版）. Same reason as its China twin: a provider
+        // string this app owns, so a missing row reads as text-only.
+        "WorkBuddy AI（国际版）": ModelCapabilities(
+            supportedModalities: ProviderType.workBuddyAI.defaultModality,
+            supportedAuth: [.oauth]
+        ),
         "Trae": ModelCapabilities(
             supportedModalities: ProviderType.trae.defaultModality,
             supportedAuth: [.oauth]

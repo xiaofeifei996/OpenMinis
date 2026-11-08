@@ -417,7 +417,7 @@ private struct InstanceRow: View {
         case .xAI: return XAIOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .kimiCode: return KimiOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .githubCopilot: return CopilotOAuthManager.shared.isAuthenticated(instanceId: instance.id)
-        case .workBuddyChina: return false // WorkBuddy China OAuth state is handled by its dedicated login flow
+        case .workBuddyChina, .workBuddyAI: return false // handled by the dedicated login flow
         case .raccoon: return RaccoonOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .autoClaw: return AutoClawAccountManager.shared.isAuthenticated(instanceId: instance.id)
         case .trae: return TraeAccountManager.shared.isAuthenticated(instanceId: instance.id)

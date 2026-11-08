@@ -125,7 +125,7 @@ extension AIChatViewModel {
             return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeXAIProvider(instance: instance, model: entry.model)))
         case .kimiCode:
             return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeKimiProvider(instance: instance, model: entry.model)))
-        case .workBuddyChina:
+        case .workBuddyChina, .workBuddyAI:
             return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeWorkBuddyChinaProvider(instance: instance, model: entry.model)))
         case .raccoon:
             return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeRaccoonProvider(instance: instance, model: entry.model)))

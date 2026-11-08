@@ -630,6 +630,7 @@
 		D0A0B0C0D0E0F01100000001 /* TraeSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F01100000002 /* TraeSignIn.swift */; };
 		D0A0B0C0D0E0F01200000001 /* TraeAccountManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F01200000002 /* TraeAccountManager.swift */; };
 		D0A0B0C0D0E0F01300000001 /* TraeStreamDialect.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F01300000002 /* TraeStreamDialect.swift */; };
+		D0A0B0C0D0E0F01400000001 /* WorkBuddyRegion.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F01400000002 /* WorkBuddyRegion.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1463,6 +1464,7 @@
 		D0A0B0C0D0E0F01100000002 /* TraeSignIn.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TraeSignIn.swift; sourceTree = "<group>"; };
 		D0A0B0C0D0E0F01200000002 /* TraeAccountManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TraeAccountManager.swift; sourceTree = "<group>"; };
 		D0A0B0C0D0E0F01300000002 /* TraeStreamDialect.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TraeStreamDialect.swift; sourceTree = "<group>"; };
+		D0A0B0C0D0E0F01400000002 /* WorkBuddyRegion.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkBuddyRegion.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -2740,6 +2742,7 @@
 			children = (
 				D0A0B0C0D0E0F00100000002 /* WorkBuddyChinaOAuthFlow.swift */,
 				D0A0B0C0D0E0F00200000002 /* WorkBuddyChinaOAuthManager.swift */,
+				D0A0B0C0D0E0F01400000002 /* WorkBuddyRegion.swift */,
 			);
 			path = WorkBuddy;
 			sourceTree = "<group>";
@@ -3153,6 +3156,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D0A0B0C0D0E0F00200000001 /* WorkBuddyChinaOAuthManager.swift in Sources */,
+				D0A0B0C0D0E0F01400000001 /* WorkBuddyRegion.swift in Sources */,
 				D0A0B0C0D0E0F00100000001 /* WorkBuddyChinaOAuthFlow.swift in Sources */,
 				D0A0B0C0D0E0F00300000001 /* RaccoonOAuthFlow.swift in Sources */,
 				D0A0B0C0D0E0F00400000001 /* RaccoonOAuthManager.swift in Sources */,

@@ -27,6 +27,11 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
     case githubCopilot
     /// Tencent WorkBuddy China. OpenAI-compatible chat endpoint with WorkBuddy-specific headers.
     case workBuddyChina
+    /// WorkBuddy AI, the international build. Same plugin login protocol and
+    /// the same chat shape as the China build, but a different host and client
+    /// fingerprint, and it rejects a conversation that does not start with a
+    /// system message.
+    case workBuddyAI
     /// SenseTime Raccoon (商汤「小浣熊」). OpenAI-compatible gateway at
     /// xiaohuanxiong.com, signed into with the desktop client's authorization
     /// code flow. Opt-in and unofficial: the app is not affiliated with the
@@ -67,6 +72,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .kimiCode: return "Kimi Code"
         case .githubCopilot: return "GitHub Copilot"
         case .workBuddyChina: return "WorkBuddy 中国版"
+        case .workBuddyAI: return "WorkBuddy AI（国际版）"
         case .raccoon: return "小浣熊（商汤）"
         case .autoClaw: return "AutoClaw（智谱 AutoGLM）"
         case .trae: return "Trae（字节跳动）"
@@ -98,8 +104,8 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .anthropic, .gemini, .antigravity, .openRouter, .xAI, .kimiCode, .githubCopilot:
             // These OAuth branches all reach a real /models endpoint.
             return true
-        case .workBuddyChina:
-            // Fetch the account-scoped catalog from WorkBuddy /v3/config.
+        case .workBuddyChina, .workBuddyAI:
+            // Fetch the account-scoped catalog from the build's own /v3/config.
             return true
         case .raccoon:
             // The account-scoped catalog at /model_catalog is the only source
@@ -143,6 +149,19 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         // WorkBuddy's upstream catalog confirms "auto" as the default model.
         // Keep this fallback intentionally minimal until account-scoped /v3/config
         // discovery is implemented; don't advertise speculative model IDs.
+        case .workBuddyAI:
+            // Same minimal fallback as the China build: the account catalog is
+            // authoritative, and a compiled-in list would go stale.
+            return [
+                LLMModel(
+                    id: "default-model",
+                    displayName: "Default",
+                    provider: "WorkBuddy AI（国际版）",
+                    modalityOverride: .textOnly,
+                    contextWindow: 168_000,
+                    supportsReasoning: false
+                )
+            ]
         case .workBuddyChina:
             return [
                 LLMModel(
@@ -204,6 +223,8 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
             return AppLocalized("Sign in with GitHub — unofficial, use at your own risk")
         case .workBuddyChina:
             return "使用WorkBuddy 登录"
+        case .workBuddyAI:
+            return "使用 WorkBuddy AI 账号登录（国际版）"
         case .raccoon:
             return "使用小浣熊账号登录（非官方接口）"
         case .autoClaw:
@@ -230,6 +251,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .kimiCode: return .vision
         case .githubCopilot: return .vision
         case .workBuddyChina: return .vision
+        case .workBuddyAI: return .vision
         case .raccoon: return .vision
         case .autoClaw: return .vision
         case .trae: return .textOnly

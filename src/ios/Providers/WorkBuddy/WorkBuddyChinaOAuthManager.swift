@@ -80,8 +80,12 @@ final class WorkBuddyChinaOAuthManager {
         let enterpriseID = ProviderKeychainHelper.loadOAuthString(
             instanceId: instanceId, account: "workbuddy-enterprise-id"
         )
+        // The two builds renew against their own plugin host, so the region has
+        // to come from the instance rather than from a constant.
+        let region: WorkBuddyRegion = ProviderConfigStore.shared
+            .instance(for: instanceId)?.providerType == .workBuddyAI ? .international : .china
         let token = try await WorkBuddyChinaOAuthFlow.refreshToken(
-            refresh, domain: domain, enterpriseID: enterpriseID
+            refresh, domain: domain, enterpriseID: enterpriseID, region: region
         )
 
         guard !token.accessToken.isEmpty else {

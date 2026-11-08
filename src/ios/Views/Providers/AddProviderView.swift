@@ -1007,6 +1007,7 @@ struct AddProviderView: View {
         case .kimiCode: return "https://api.kimi.com/coding"
         case .githubCopilot: return CopilotConstants.apiBaseURL
         case .workBuddyChina: return "https://copilot.tencent.com/v2"
+        case .workBuddyAI: return "https://www.workbuddy.ai/v2"
         case .raccoon: return RaccoonOAuthFlow.llmBase
         case .autoClaw: return AutoClawAPI.defaultBase
         case .trae: return TraeAPI.Site.china.apiOrigin
@@ -1111,6 +1112,46 @@ struct AddProviderView: View {
                 // Browser sign-in: the sheet presents a Safari page and the
                 // loopback server in TraeSignIn answers it.
                 try await TraeAccountManager.shared.signIn(instanceId: pendingInstanceId)
+            case .workBuddyAI:
+                // Same plugin login, different platform query. The sheet and
+                // the account poll are identical, so only the region differs.
+                let login = try await WorkBuddyChinaOAuthFlow.begin(region: .international)
+                await WorkBuddyChinaOAuthFlow.openAuthorizationPage(login)
+                let token = try await WorkBuddyChinaOAuthFlow.pollToken(for: login)
+                let account = try await WorkBuddyChinaOAuthFlow.pollAccount(
+                    for: login,
+                    accessToken: token.accessToken,
+                    domain: token.domain
+                )
+                ProviderKeychainHelper.saveOAuthString(
+                    token.accessToken,
+                    instanceId: pendingInstanceId,
+                    account: "manual-oauth-token"
+                )
+                let accessExpiry = token.expiresAt.map { Date(timeIntervalSince1970: $0) }
+                    ?? Date().addingTimeInterval(TimeInterval(token.expiresIn ?? 3600))
+                ProviderKeychainHelper.saveOAuthString(
+                    String(accessExpiry.timeIntervalSince1970),
+                    instanceId: pendingInstanceId,
+                    account: "workbuddy-access-expiry"
+                )
+                ProviderKeychainHelper.saveOAuthString(
+                    account.userID,
+                    instanceId: pendingInstanceId,
+                    account: "workbuddy-user-id"
+                )
+                ProviderKeychainHelper.saveOAuthString(
+                    account.domain ?? token.domain ?? "www.workbuddy.ai",
+                    instanceId: pendingInstanceId,
+                    account: "workbuddy-domain"
+                )
+                if let refresh = token.refreshToken, !refresh.isEmpty {
+                    ProviderKeychainHelper.saveOAuthString(
+                        refresh,
+                        instanceId: pendingInstanceId,
+                        account: "workbuddy-refresh-token"
+                    )
+                }
             case .workBuddyChina:
                 let login = try await WorkBuddyChinaOAuthFlow.begin()
                 await WorkBuddyChinaOAuthFlow.openAuthorizationPage(login)
@@ -1201,7 +1242,7 @@ struct AddProviderView: View {
             token = ProviderKeychainHelper.loadOAuthToken(instanceId: pendingInstanceId, as: XAITokenStorage.self)?.accessToken
         case .kimiCode:
             token = ProviderKeychainHelper.loadOAuthToken(instanceId: pendingInstanceId, as: KimiTokenStorage.self)?.accessToken
-        case .workBuddyChina:
+        case .workBuddyChina, .workBuddyAI:
             token = ProviderKeychainHelper.loadOAuthString(instanceId: pendingInstanceId, account: "manual-oauth-token")
         case .raccoon:
             token = ProviderKeychainHelper.loadOAuthString(
@@ -1316,6 +1357,7 @@ struct AddProviderView: View {
         case .kimiCode: return AppLocalized("Sign in with Kimi Code")
         case .githubCopilot: return AppLocalized("Sign in with GitHub")
         case .workBuddyChina: return "使用WorkBuddy 登录"
+        case .workBuddyAI: return "使用 WorkBuddy AI 登录"
         case .raccoon: return "使用小浣熊账号登录"
         case .autoClaw: return "使用智谱账号登录"
         case .trae: return "使用 Trae 账号登录"
@@ -1336,6 +1378,7 @@ struct AddProviderView: View {
         case .kimiCode: return "" // OAuth only
         case .githubCopilot: return "" // OAuth only
         case .workBuddyChina: return "WorkBuddy access token"
+        case .workBuddyAI: return "WorkBuddy AI access token"
         case .raccoon: return "xiaohuanxiong.com access token"
         case .autoClaw: return "AutoClaw access token"
         case .trae: return ""
@@ -1355,6 +1398,7 @@ struct AddProviderView: View {
         case .kimiCode: return "Kimi Code"
         case .githubCopilot: return "GitHub Copilot"
         case .workBuddyChina: return "WorkBuddy 中国版"
+        case .workBuddyAI: return "WorkBuddy AI（国际版）"
         case .raccoon: return "小浣熊（商汤）"
         case .autoClaw: return "AutoClaw（智谱 AutoGLM）"
         case .trae: return "Trae（字节跳动）"
@@ -1388,7 +1432,7 @@ struct AddProviderView: View {
         // path and fails with no explanation.
         case .githubCopilot:
             return [.oauth]
-        case .workBuddyChina:
+        case .workBuddyChina, .workBuddyAI:
             return [.oauth]
         case .raccoon:
             // The supported path is the account sign-in; the "Or Configure
@@ -1450,6 +1494,8 @@ struct AddProviderView: View {
             return AppLocalized("Use a Kimi Coding API key.")
         case (.workBuddyChina, .oauth):
             return "打开WorkBuddy 登录"
+        case (.workBuddyAI, .oauth):
+            return "打开 WorkBuddy AI 登录（国际版，需对应区域账号）"
         case (.workBuddyChina, .apiKey):
             return AppLocalized("WorkBuddy China requires an account access token and account headers.")
         case (.githubCopilot, _):
@@ -1491,6 +1537,9 @@ struct AddProviderView: View {
         case .workBuddyChina:
             Image(systemName: "bubble.left.and.bubble.right")
                 .foregroundStyle(.blue)
+        case .workBuddyAI:
+            Image(systemName: "bubble.left.and.bubble.right.fill")
+                .foregroundStyle(.teal)
         case .raccoon:
             Image(systemName: "pawprint.fill")
                 .foregroundStyle(.orange)
@@ -1521,6 +1570,7 @@ struct AddProviderView: View {
         case .kimiCode: return .indigo
         case .githubCopilot: return .primary
         case .workBuddyChina: return .blue
+        case .workBuddyAI: return .teal
         case .raccoon: return .orange
         case .autoClaw: return .teal
         case .trae: return .indigo

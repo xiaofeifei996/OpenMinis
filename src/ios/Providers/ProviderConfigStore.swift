@@ -3289,11 +3289,12 @@ final class ProviderConfigStore: ObservableObject {
             let kimiBase = customBase ?? "https://api.kimi.com/coding"
             let kimiAppendV1 = customBase == nil ? true : appendV1  // default base …/coding needs /v1 appended
             return try await OpenAIModelsAPI.fetchModels(apiKey: token, baseURL: kimiBase, appendV1Suffix: kimiAppendV1, forceRefresh: forceRefresh, userAgent: nil)
-        case (.workBuddyChina, .apiKey):
+        case (.workBuddyChina, .apiKey), (.workBuddyAI, .apiKey):
             // WorkBuddy's static Bearer Token mode stores its credential in the
             // OAuth-token slot. Prefer that account token for the account-scoped
             // /v3/config catalog; otherwise this branch incorrectly falls through
             // to API-key validation and reports "no API key is set".
+            let region = workBuddyRegion(for: instance)
             if let bearer = ProviderKeychainHelper.loadOAuthString(
                 instanceId: instance.id, account: "manual-oauth-token"
             ), !bearer.isEmpty {
@@ -3301,7 +3302,8 @@ final class ProviderConfigStore: ObservableObject {
                     accessToken: bearer,
                     userID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-user-id"),
                     domain: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-domain"),
-                    enterpriseID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-enterprise-id")
+                    enterpriseID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-enterprise-id"),
+                    region: region
                 )
                 guard !models.isEmpty else { throw ModelRefreshError.noCredential }
                 return models
@@ -3309,11 +3311,11 @@ final class ProviderConfigStore: ObservableObject {
             guard let key = modelFetchAPIKey(for: instance) else {
                 throw ModelRefreshError.noCredential
             }
-            let base = customBase ?? "https://copilot.tencent.com/v2"
+            let base = customBase ?? region.chatBase
             return try await OpenAIModelsAPI.fetchModels(
                 apiKey: key, baseURL: base, appendV1Suffix: false,
-                forceRefresh: forceRefresh, userAgent: "WorkBuddy/5.5.6")
-        case (.workBuddyChina, .oauth):
+                forceRefresh: forceRefresh, userAgent: region.userAgent)
+        case (.workBuddyChina, .oauth), (.workBuddyAI, .oauth):
             // Use WorkBuddy's account-scoped model catalog; /v2/models may only return `auto`.
             let token = try await WorkBuddyChinaOAuthManager.shared.validAccessToken(
                 instanceId: instance.id
@@ -3322,7 +3324,8 @@ final class ProviderConfigStore: ObservableObject {
                 accessToken: token,
                 userID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-user-id"),
                 domain: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-domain"),
-                enterpriseID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-enterprise-id")
+                enterpriseID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-enterprise-id"),
+                region: workBuddyRegion(for: instance)
             )
             guard !models.isEmpty else { throw ModelRefreshError.noCredential }
             return models
@@ -3396,6 +3399,12 @@ final class ProviderConfigStore: ObservableObject {
             // Synced from a newer build — can't fetch; keep whatever's stored.
             return []
         }
+    }
+
+    /// Which WorkBuddy build an instance belongs to. The two share one login
+    /// flow and one catalog shape, differing only in `WorkBuddyRegion`.
+    private func workBuddyRegion(for instance: ProviderInstance) -> WorkBuddyRegion {
+        instance.providerType == .workBuddyAI ? .international : .china
     }
 
     /// Result of a model fetch with fallback — includes diagnostic warnings for each step.
@@ -3575,6 +3584,7 @@ final class ProviderConfigStore: ObservableObject {
         case .kimiCode: return "https://api.kimi.com/coding"
         case .githubCopilot: return CopilotConstants.apiBaseURL
         case .workBuddyChina: return "https://copilot.tencent.com/v2"
+        case .workBuddyAI: return "https://www.workbuddy.ai/v2"
         case .raccoon: return RaccoonOAuthFlow.llmBase
         case .autoClaw: return AutoClawAPI.defaultBase
         case .trae: return TraeAPI.Site.china.apiOrigin

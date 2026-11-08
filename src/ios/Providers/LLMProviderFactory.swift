@@ -80,6 +80,8 @@ enum LLMProviderFactory {
             return openCode(makeCopilotProvider(instance: instance, model: entry.model))
         case .workBuddyChina:
             return openCode(makeWorkBuddyChinaProvider(instance: instance, model: entry.model))
+        case .workBuddyAI:
+            return openCode(makeWorkBuddyAIProvider(instance: instance, model: entry.model))
         case .raccoon:
             return openCode(makeRaccoonProvider(instance: instance, model: entry.model))
         case .autoClaw:
@@ -375,6 +377,20 @@ enum LLMProviderFactory {
     /// OAuth login and account-bound headers are handled separately; this
     /// builder also honors a manually supplied bearer token for testing.
     static func makeWorkBuddyChinaProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
+        makeWorkBuddyProvider(instance: instance, model: model, region: .china)
+    }
+
+    /// WorkBuddy AI, the international build. Shares every line of the China
+    /// builder except the facts in `WorkBuddyRegion`.
+    static func makeWorkBuddyAIProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
+        makeWorkBuddyProvider(instance: instance, model: model, region: .international)
+    }
+
+    static func makeWorkBuddyProvider(
+        instance: ProviderInstance,
+        model: LLMModel,
+        region: WorkBuddyRegion
+    ) -> OpenAIProvider {
         let instanceId = instance.id
         let provider: OpenAIProvider
         if instance.credentialType == .oauth {
@@ -389,22 +405,40 @@ enum LLMProviderFactory {
             provider = OpenAIProvider(
                 apiKey: token,
                 model: model,
-                customBaseURL: instance.effectiveCustomBaseURL ?? "https://copilot.tencent.com/v2",
+                customBaseURL: instance.effectiveCustomBaseURL ?? region.chatBase,
                 appendV1Suffix: false
             )
         }
-        provider.customBaseURL = instance.effectiveCustomBaseURL ?? "https://copilot.tencent.com/v2"
+        provider.customBaseURL = instance.effectiveCustomBaseURL ?? region.chatBase
         provider.appendV1Suffix = false
         provider.extraHeaders.merge([
-            "User-Agent": "WorkBuddy/5.5.6",
+            "User-Agent": region.userAgent,
             "X-Product": "SaaS",
-            "X-IDE-Type": "WorkBuddy",
-            "X-IDE-Name": "WorkBuddy",
-            "X-IDE-Version": "5.5.6",
+            "X-IDE-Type": region.ideName,
+            "X-IDE-Name": region.ideName,
+            "X-IDE-Version": region.clientVersion,
             "X-Requested-With": "XMLHttpRequest",
             "X-Agent-Intent": "craft",
-            "X-Agent-Purpose": "conversation"
+            "X-Agent-Purpose": "conversation",
+            "Accept-Language": region.acceptLanguage,
         ]) { _, new in new }
+        if region.requiresLeadingSystemMessage {
+            // The international build answers 400 code 11128 ("first message
+            // is not system prompt") to a conversation that does not open with
+            // one, so a minimal one is inserted when the turn has none.
+            let placeholder = "You are a helpful assistant."
+            provider.bodyTransform = { body in
+                var out = body
+                if var messages = out["messages"] as? [[String: Any]] {
+                    let first = messages.first?["role"] as? String
+                    if first != "system" && first != "developer" {
+                        messages.insert(["role": "system", "content": placeholder], at: 0)
+                        out["messages"] = messages
+                    }
+                }
+                return out
+            }
+        }
         // WorkBuddy's gateway expects request identifiers in the desktop client's
         // chat headers. This provider hook runs for each outbound request.
         provider.perRequestHeaders = { _ in
@@ -425,6 +459,10 @@ enum LLMProviderFactory {
                 instanceId: instance.id, account: "workbuddy-domain"
             ), !domain.isEmpty {
                 provider.extraHeaders["X-Domain"] = domain
+            } else if region == .international {
+                // The international build's gateway expects its own host in the
+                // tenant header; the China build leaves it to the sign-in.
+                provider.extraHeaders["X-Domain"] = region.domain
             }
             if let enterpriseID = ProviderKeychainHelper.loadOAuthString(
                 instanceId: instance.id, account: "workbuddy-enterprise-id"

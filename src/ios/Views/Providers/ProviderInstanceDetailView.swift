@@ -667,6 +667,7 @@ struct ProviderInstanceDetailView: View {
         case .kimiCode: return "https://api.kimi.com/coding"
         case .githubCopilot: return CopilotConstants.apiBaseURL
         case .workBuddyChina: return "https://copilot.tencent.com/v2"
+        case .workBuddyAI: return "https://www.workbuddy.ai/v2"
         case .raccoon: return RaccoonOAuthFlow.llmBase
         case .autoClaw: return AutoClawAPI.defaultBase
         case .trae: return TraeAPI.Site.china.apiOrigin
@@ -1110,7 +1111,7 @@ struct ProviderInstanceDetailView: View {
         case .xAI: return XAIOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .kimiCode: return KimiOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .githubCopilot: return CopilotOAuthManager.shared.isAuthenticated(instanceId: instance.id)
-        case .workBuddyChina: return false // dedicated WorkBuddy China OAuth flow
+        case .workBuddyChina, .workBuddyAI: return false // dedicated WorkBuddy OAuth flow
         case .raccoon: return RaccoonOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .autoClaw: return AutoClawAccountManager.shared.isAuthenticated(instanceId: instance.id)
         case .trae: return TraeAccountManager.shared.isAuthenticated(instanceId: instance.id)
@@ -1180,6 +1181,8 @@ struct ProviderInstanceDetailView: View {
                 ? AppLocalized("Authenticated") : AppLocalized("Not authenticated")
         case .workBuddyChina:
             return "使用WorkBuddy 登录"
+        case .workBuddyAI:
+            return "使用 WorkBuddy AI 登录"
         case .raccoon:
             guard RaccoonOAuthManager.shared.isAuthenticated(instanceId: instance.id) else {
                 return AppLocalized("Not authenticated")
@@ -1221,6 +1224,7 @@ struct ProviderInstanceDetailView: View {
         case .kimiCode: return AppLocalized("Sign in with Kimi Code")
         case .githubCopilot: return AppLocalized("Sign in with GitHub")
         case .workBuddyChina: return "使用WorkBuddy 登录"
+        case .workBuddyAI: return "使用 WorkBuddy AI 登录"
         case .raccoon: return "使用小浣熊账号登录"
         case .autoClaw: return "使用智谱账号登录"
         case .trae: return "使用 Trae 账号登录"
@@ -1240,7 +1244,7 @@ struct ProviderInstanceDetailView: View {
             case .xAI: try await XAIOAuthManager.shared.login(instanceId: instance.id)
             case .kimiCode: break // device-code flow runs in KimiDeviceLoginSheet
             case .githubCopilot: break // device-code flow runs in CopilotDeviceLoginSheet
-            case .workBuddyChina: break // dedicated WorkBuddy China sign-in flow is launched by the view
+            case .workBuddyChina, .workBuddyAI: break // sign-in flow launched by the view
             case .raccoon: try await RaccoonOAuthManager.shared.login(instanceId: instance.id)
             case .autoClaw: break // phone + SMS flow runs in AutoClawLoginSheet
             case .trae: try await TraeAccountManager.shared.signIn(instanceId: instance.id)
@@ -1292,7 +1296,7 @@ struct ProviderInstanceDetailView: View {
         case .xAI: XAIOAuthManager.shared.logout(instanceId: instance.id)
         case .kimiCode: KimiOAuthManager.shared.logout(instanceId: instance.id)
         case .githubCopilot: CopilotOAuthManager.shared.logout(instanceId: instance.id)
-        case .workBuddyChina: break // dedicated WorkBuddy China credentials are managed by its OAuth flow
+        case .workBuddyChina, .workBuddyAI: break // credentials managed by its OAuth flow
         case .raccoon: RaccoonOAuthManager.shared.logout(instanceId: instance.id)
         case .autoClaw: AutoClawAccountManager.shared.logout(instanceId: instance.id)
         case .trae: TraeAccountManager.shared.logout(instanceId: instance.id)
@@ -1321,8 +1325,8 @@ struct ProviderInstanceDetailView: View {
             token = try? await KimiOAuthManager.shared.validAccessToken(instanceId: instance.id)
         case .githubCopilot:
             token = try? await CopilotOAuthManager.shared.validSessionToken(instanceId: instance.id)
-        case .workBuddyChina:
-            token = nil // token export is handled by the dedicated WorkBuddy China flow
+        case .workBuddyChina, .workBuddyAI:
+            token = nil // token export is handled by the dedicated WorkBuddy flow
         case .raccoon:
             token = try? await RaccoonOAuthManager.shared.validAccessToken(instanceId: instance.id)
         case .autoClaw:
@@ -1346,7 +1350,7 @@ struct ProviderInstanceDetailView: View {
         case .xAI: return "xai-..."
         case .kimiCode: return "" // OAuth only
         case .githubCopilot: return "" // OAuth only
-        case .workBuddyChina: return "" // OAuth only
+        case .workBuddyChina, .workBuddyAI: return "" // OAuth only
         case .raccoon: return "" // OAuth only
         case .autoClaw: return "" // OAuth only
         case .trae: return "" // OAuth only

@@ -47,9 +47,9 @@ enum WorkBuddyChinaOAuthFlow {
     }
 
     /// Request a short-lived state and browser authorization URL.
-    static func begin(session: URLSession = .shared) async throws -> LoginState {
+    static func begin(region: WorkBuddyRegion = .china, session: URLSession = .shared) async throws -> LoginState {
         let payload = try await requestJSON(
-            path: "/v2/plugin/auth/state?platform=workbuddy",
+            path: "/v2/plugin/auth/state?platform=\(region.pluginPlatform)",
             method: "POST",
             headers: [
                 "X-No-Authorization": "true",
@@ -58,6 +58,8 @@ enum WorkBuddyChinaOAuthFlow {
                 "X-No-Department-Info": "true"
             ],
             body: Data("{}".utf8),
+            base: URL(string: region.pluginHost),
+            region: region,
             session: session
         )
         guard let state = payload["state"] as? String,
@@ -78,6 +80,7 @@ enum WorkBuddyChinaOAuthFlow {
     static func pollToken(
         for login: LoginState,
         timeout: TimeInterval = signInTimeout,
+        region: WorkBuddyRegion = .china,
         session: URLSession = .shared,
         onPending: (() -> Void)? = nil
     ) async throws -> Token {
@@ -96,6 +99,8 @@ enum WorkBuddyChinaOAuthFlow {
                         "X-No-Department-Info": "true"
                     ],
                     body: nil,
+                    base: URL(string: region.pluginHost),
+                    region: region,
                     session: session
                 )
                 guard let access = payload["accessToken"] as? String, !access.isEmpty else {
@@ -139,6 +144,7 @@ enum WorkBuddyChinaOAuthFlow {
         accessToken: String,
         domain: String?,
         timeout: TimeInterval = signInTimeout,
+        region: WorkBuddyRegion = .china,
         session: URLSession = .shared,
         onPending: (() -> Void)? = nil
     ) async throws -> Account {
@@ -152,12 +158,14 @@ enum WorkBuddyChinaOAuthFlow {
                     "X-No-User-Id": "true",
                     "X-No-Enterprise-Id": "true"
                 ]
-                headers["X-Domain"] = domain ?? endpoint.host
+                headers["X-Domain"] = domain ?? region.domain
                 let payload = try await requestJSON(
                     path: "/v2/plugin/login/account?state=\(Self.encodeQueryValue(login.state))",
                     method: "GET",
                     headers: headers,
                     body: nil,
+                    base: URL(string: region.pluginHost),
+                    region: region,
                     session: session
                 )
                 guard let uid = payload["uid"] as? String, !uid.isEmpty else {
@@ -167,7 +175,9 @@ enum WorkBuddyChinaOAuthFlow {
                 var enterpriseID = (payload["enterpriseId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
                 if (enterpriseID ?? "").isEmpty, let accountType, !accountType.isEmpty, accountType.lowercased() != "personal" {
                     // Some enterprise accounts omit enterpriseId from /login/account.
-                    if let listed = try? await requestJSON(path: "/v2/plugin/accounts", method: "GET", headers: headers, body: nil, session: session) {
+                    if let listed = try? await requestJSON(
+                        path: "/v2/plugin/accounts", method: "GET", headers: headers, body: nil,
+                        base: URL(string: region.pluginHost), region: region, session: session) {
                         let accounts = listed["accounts"] as? [[String: Any]] ?? []
                         let matching = accounts.filter {
                             ($0["uid"] as? String) == uid && !(($0["enterpriseId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
@@ -212,13 +222,14 @@ enum WorkBuddyChinaOAuthFlow {
         _ refreshToken: String,
         domain: String?,
         enterpriseID: String? = nil,
+        region: WorkBuddyRegion = .china,
         session: URLSession = .shared
     ) async throws -> Token {
         var headers = [
             "X-Refresh-Token": refreshToken,
             "X-Auth-Refresh-Source": "plugin"
         ]
-        headers["X-Domain"] = domain ?? endpoint.host
+        headers["X-Domain"] = domain ?? region.domain
         if let enterpriseID, !enterpriseID.isEmpty {
             headers["X-Enterprise-Id"] = enterpriseID
             headers["X-Tenant-Id"] = enterpriseID
@@ -228,6 +239,8 @@ enum WorkBuddyChinaOAuthFlow {
             method: "POST",
             headers: headers,
             body: Data("{}".utf8),
+            base: URL(string: region.pluginHost),
+            region: region,
             session: session
         )
         guard let access = payload["accessToken"] as? String, !access.isEmpty else {
@@ -252,25 +265,28 @@ enum WorkBuddyChinaOAuthFlow {
         userID: String? = nil,
         domain: String? = nil,
         enterpriseID: String? = nil,
+        region: WorkBuddyRegion = .china,
         session: URLSession = .shared
     ) async throws -> [LLMModel] {
         let payload = try await requestJSON(
             path: "/v3/config",
             method: "GET",
+            base: URL(string: region.catalogBase),
             headers: [
                 "Authorization": "Bearer \\(accessToken)",
-                "X-Domain": (domain?.isEmpty == false ? domain! : (endpoint.host ?? "copilot.tencent.com")),
+                "X-Domain": (domain?.isEmpty == false ? domain! : region.domain),
                 "X-Product": "SaaS",
-                "X-IDE-Type": "WorkBuddy",
-                "X-IDE-Name": "WorkBuddy",
-                "X-IDE-Version": "5.5.6",
+                "X-IDE-Type": region.ideName,
+                "X-IDE-Name": region.ideName,
+                "X-IDE-Version": region.clientVersion,
                 "X-Requested-With": "XMLHttpRequest",
                 "X-Agent-Intent": "craft",
                 "X-Agent-Purpose": "conversation",
                 // The bare WorkBuddy user-agent receives the IDE config,
-                // which does not contain the CLI model picker. Match Apelin/kwwk.
-                "User-Agent": "CLI/2.0.0 WorkBuddy/5.5.6",
+                // which does not contain the CLI model picker. Match Apelin/kwk.
+                "User-Agent": region.userAgent,
                 "Accept": "application/json",
+                "Accept-Language": region.acceptLanguage,
                 // Model catalog requests must carry the signed-in account identity
                 // rather than suppressing enterprise context as the login polls do.
             ].merging(userID.map { ["X-User-Id": $0] } ?? [:]) { _, new in new }
@@ -377,9 +393,11 @@ enum WorkBuddyChinaOAuthFlow {
         method: String,
         headers: [String: String],
         body: Data?,
+        base: URL? = nil,
+        region: WorkBuddyRegion = .china,
         session: URLSession
     ) async throws -> [String: Any] {
-        guard let url = URL(string: path, relativeTo: endpoint) else {
+        guard let url = URL(string: path, relativeTo: base ?? endpoint) else {
             throw FlowError.invalidResponse
         }
         var request = URLRequest(url: url)
@@ -387,7 +405,21 @@ enum WorkBuddyChinaOAuthFlow {
         request.httpBody = body
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        // The plugin endpoints are fingerprinted on the client: the
+        // international build serves them from its own origin and rejects a
+        // request whose UA does not name its platform segment. The China build
+        // keeps the plain `WorkBuddy/<v>` UA it has always sent.
+        // China keeps exactly the request it has always sent — it is the path
+        // that is known to work, and adding headers to it would be an
+        // unforced change. The international build is fingerprinted on the
+        // origin it was served from, so it gets both.
+        if region == .international {
+            request.setValue(region.userAgent, forHTTPHeaderField: "User-Agent")
+            request.setValue(region.pluginHost, forHTTPHeaderField: "Origin")
+            request.setValue(region.pluginHost + "/", forHTTPHeaderField: "Referer")
+        } else {
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        }
         headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
 
         let (data, response) = try await session.data(for: request)

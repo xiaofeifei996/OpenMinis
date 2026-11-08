@@ -271,7 +271,6 @@ enum WorkBuddyChinaOAuthFlow {
         let payload = try await requestJSON(
             path: "/v3/config",
             method: "GET",
-            base: URL(string: region.catalogBase),
             headers: [
                 "Authorization": "Bearer \\(accessToken)",
                 "X-Domain": (domain?.isEmpty == false ? domain! : region.domain),
@@ -292,6 +291,8 @@ enum WorkBuddyChinaOAuthFlow {
             ].merging(userID.map { ["X-User-Id": $0] } ?? [:]) { _, new in new }
              .merging(enterpriseID.map { ["X-Enterprise-Id": $0, "X-Tenant-Id": $0] } ?? [:]) { _, new in new },
             body: nil,
+            base: URL(string: region.catalogBase),
+            region: region,
             session: session
         )
 

@@ -440,6 +440,13 @@ final class ClaudeOAuthManager: NSObject, ObservableObject {
 struct OAuthCallbackResult {
     let code: String
     let state: String?
+    /// Every query parameter the callback carried.
+    ///
+    /// Standard OAuth needs only `code` and `state`, but a gateway that speaks
+    /// its own dialect hands back more (Trae returns `authCodeInfo`, `userInfo`
+    /// and `loginHost`), and dropping them here would mean parsing the same
+    /// request twice in two places.
+    var query: [String: String] = [:]
 }
 
 /// Minimal HTTP server on localhost that listens for the OAuth callback.
@@ -451,6 +458,13 @@ final class OAuthCallbackServer: @unchecked Sendable {
     /// Empty set → OPTIONS requests are answered with 404 (legacy behavior).
     private let optionsCORSAllowedHosts: Set<String>
     private var listenSocket: Int32 = -1
+    /// Whether a callback with no `code` is still delivered (the caller reads
+    /// `query` instead). Trae's page returns `authCodeInfo`, so treating a
+    /// missing code as an error would reject every sign-in.
+    private let requiresCode: Bool
+    /// The port actually bound. Differs from `port` when the caller asked for 0
+    /// (any free port) — the redirect URI has to name the real one.
+    private(set) var boundPort: UInt16 = 0
     private var continuation: CheckedContinuation<OAuthCallbackResult, Error>?
     private let queue = DispatchQueue(label: "oauth.callback.server")
     private var stopped = false
@@ -466,11 +480,13 @@ final class OAuthCallbackServer: @unchecked Sendable {
     init(
         port: UInt16,
         callbackPath: String = "/callback",
-        optionsCORSAllowedHosts: Set<String> = []
+        optionsCORSAllowedHosts: Set<String> = [],
+        requiresCode: Bool = true
     ) {
         self.port = port
         self.callbackPath = callbackPath
         self.optionsCORSAllowedHosts = Set(optionsCORSAllowedHosts.map { $0.lowercased() })
+        self.requiresCode = requiresCode
     }
 
     func start() throws {
@@ -504,7 +520,17 @@ final class OAuthCallbackServer: @unchecked Sendable {
         }
 
         self.listenSocket = fd
-        logger.info("[Server] Listening on port \(self.port)")
+        // Ask the kernel which port it picked: a caller that passed 0 has no
+        // other way to learn it, and a redirect naming port 0 goes nowhere.
+        var bound = sockaddr_in()
+        var boundLength = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let nameResult = withUnsafeMutablePointer(to: &bound) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
+                getsockname(fd, sockPtr, &boundLength)
+            }
+        }
+        self.boundPort = nameResult == 0 ? UInt16(bigEndian: bound.sin_port) : self.port
+        logger.info("[Server] Listening on port \(self.boundPort)")
 
         queue.async { [weak self] in
             self?.acceptLoop()
@@ -698,6 +724,16 @@ final class OAuthCallbackServer: @unchecked Sendable {
 
         logger.info("[Server] Callback — code present: \(code != nil), state present: \(state != nil)")
 
+        var allQuery: [String: String] = [:]
+        for item in queryItems {
+            if let value = item.value { allQuery[item.name] = value }
+        }
+        if !requiresCode {
+            sendSuccessPage(fd: fd)
+            finish(.success(OAuthCallbackResult(code: code ?? "", state: state, query: allQuery)))
+            return
+        }
+
         guard let code, !code.isEmpty else {
             let errorMsg = queryItems.first(where: { $0.name == "error" })?.value ?? "No code"
             logger.error("[Server] Callback error: \(errorMsg)")
@@ -708,7 +744,7 @@ final class OAuthCallbackServer: @unchecked Sendable {
 
         sendSuccessPage(fd: fd)
 
-        finish(.success(OAuthCallbackResult(code: code, state: state)))
+        finish(.success(OAuthCallbackResult(code: code, state: state, query: allQuery)))
     }
 
     private func sendSuccessPage(fd: Int32) {

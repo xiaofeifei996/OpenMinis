@@ -84,6 +84,8 @@ enum LLMProviderFactory {
             return openCode(makeRaccoonProvider(instance: instance, model: entry.model))
         case .autoClaw:
             return openCode(makeAutoClawProvider(instance: instance, model: entry.model))
+        case .trae:
+            return openCode(makeTraeProvider(instance: instance, model: entry.model))
         case .unsupported:
             throw FactoryError.voiceOnlyProvider
         }
@@ -520,6 +522,64 @@ enum LLMProviderFactory {
             ["x-request-id": UUID().uuidString.lowercased()]
         }
         provider.bodyTransform = { AutoClawAPI.normalizeBody($0) }
+        return provider
+    }
+
+    /// Trae (字节跳动 IDE).
+    ///
+    /// Four things differ from a normal OpenAI-compatible provider, and all are
+    /// gateway validation rather than features:
+    ///
+    ///   * the credential rides in THREE headers, prefixed `Cloud-IDE-JWT `;
+    ///   * `body.model` and `body.config_name` must both name the model, and the
+    ///     `function` field picks the roster that may call it;
+    ///   * message content is a text-block array and tool `parameters` a JSON
+    ///     string (handled in `TraeAPI.mendedBody`);
+    ///   * the response is `event: output/token_usage/done`, not chunks, so a
+    ///     translator rewrites each frame before the usual parser sees it.
+    static func makeTraeProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
+        let iid = instance.id
+        // The two builds have different chat hosts, and the sign-in records
+        // which one this account belongs to.
+        let origin = instance.effectiveCustomBaseURL
+            ?? TraeAccountManager.apiOrigin(instanceId: iid)
+            ?? TraeAPI.Site.china.apiOrigin
+        let provider: OpenAIProvider
+        if let manual = ProviderKeychainHelper.loadOAuthString(
+            instanceId: iid, account: "manual-oauth-token"
+        ), !manual.isEmpty {
+            provider = OpenAIProvider(
+                apiKey: manual, model: model, customBaseURL: origin, appendV1Suffix: false)
+        } else {
+            provider = OpenAIProvider(
+                oauthTokenProvider: { try await TraeAccountManager.shared.validAccessToken(instanceId: iid) },
+                model: model
+            )
+            // The OAuth initializer leaves these at their defaults (no base URL,
+            // /v1 appended), which would target api.openai.com.
+            provider.customBaseURL = origin
+            provider.appendV1Suffix = false
+        }
+        provider.authHeaderName = "Authorization"
+        provider.authHeaderPrefix = "Cloud-IDE-JWT "
+        let ids = TraeAccountManager.extraHeaderValues(instanceId: iid)
+        provider.extraHeaders.merge(TraeAPI.clientHeaders()) { _, new in new }
+        provider.extraAuthHeaders = { token in
+            var headers = TraeAPI.accountHeaders(
+                token: token,
+                userID: ids.userID,
+                machineID: ids.machineID,
+                deviceID: ids.deviceID
+            )
+            // The per-request trace ids come from accountHeaders, so they are
+            // fresh for every call.
+            headers.removeValue(forKey: "Authorization")
+            return headers
+        }
+        provider.bodyTransform = { body in
+            TraeAPI.mendedBody(body, model: model.id)
+        }
+        provider.streamTranslator = TraeDialect()
         return provider
     }
 

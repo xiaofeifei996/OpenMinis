@@ -172,6 +172,27 @@ final class OpenAIProvider: LLMProvider {
     /// something a caller patches by adding a second header.
     var authHeaderName: String = "Authorization"
 
+    /// Prefix the credential gets inside `authHeaderName`. `Bearer ` for every
+    /// gateway but Trae, which wants `Cloud-IDE-JWT `.
+    var authHeaderPrefix: String = "Bearer "
+
+    /// Extra headers carrying the SAME credential under other names.
+    ///
+    /// Trae reads one token in three headers (`Authorization`, `X-Ide-Token`,
+    /// `X-Cloudide-Token`) and refuses the request when any is missing. Doing
+    /// it here rather than in `perRequestHeaders` keeps the credential out of a
+    /// closure that never receives it.
+    var extraAuthHeaders: (@Sendable (String) -> [String: String])?
+
+    /// Rewrites a non-OpenAI SSE dialect into OpenAI chunk payloads.
+    ///
+    /// nil means the upstream already speaks Chat Completions, which is every
+    /// provider except Trae: it answers `event: output/token_usage/error/done`
+    /// frames with no `choices` at all. The provider stays ignorant of who it
+    /// is talking to — it hands each frame over and parses what comes back
+    /// through the one path it already has.
+    var streamTranslator: (any TraeStreamTranslator)?
+
     /// Last chance to rewrite a Chat Completions body before it is serialized.
     ///
     /// Some gateways validate the body server-side in ways no client flag can
@@ -459,7 +480,7 @@ final class OpenAIProvider: LLMProvider {
         if isAzure {
             request.setValue(token, forHTTPHeaderField: "api-key")
         } else {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: authHeaderName)
+            request.setValue(authHeaderPrefix + token, forHTTPHeaderField: authHeaderName)
         }
     }
 
@@ -765,7 +786,17 @@ final class OpenAIProvider: LLMProvider {
             let task = Task {
                 do {
                     continuation.yield(.started)
+                    var sseEvent = ""
                     for try await line in byteStream.lines {
+                        // A dialect that names its frames in `event:` needs that
+                        // name carried across to the next `data:` line — Trae
+                        // puts the discriminator there, not in the payload.
+                        if line.hasPrefix("event:") {
+                            let after = line.dropFirst(6)
+                            sseEvent = (after.first == " " ? String(after.dropFirst()) : String(after))
+                                .trimmingCharacters(in: .whitespaces)
+                            continue
+                        }
                         // Tolerate `data:` with or without the optional space
                         // — see OpenAIAgentProvider.ssePayload for context
                         // (China Telecom's deepseek-v4-oc endpoint omits it).
@@ -776,24 +807,46 @@ final class OpenAIProvider: LLMProvider {
                             continuation.yield(.finished(stopReason: nil))
                             break
                         }
-                        guard let eventData = payload.data(using: .utf8),
-                              let event = try? JSONSerialization.jsonObject(with: eventData) as? [String: Any] else { continue }
 
-                        if self.usesChatCompletionsAPI {
-                            if let choices = event["choices"] as? [[String: Any]],
-                               let delta = choices.first?["delta"] as? [String: Any],
-                               let text = delta["content"] as? String {
-                                continuation.yield(.text(text))
+                        // A translator turns the frame into standard OpenAI
+                        // chunks (zero or more) and the code below consumes the
+                        // result unchanged, so there is one parse path for every
+                        // provider.
+                        var payloads = [payload]
+                        if let translator = self.streamTranslator {
+                            payloads = translator.translate(event: sseEvent, payload: payload)
+                            sseEvent = ""
+                        }
+
+                        for one in payloads {
+                            guard let eventData = one.data(using: .utf8),
+                                  let event = try? JSONSerialization.jsonObject(with: eventData) as? [String: Any] else { continue }
+
+                            // A translated error frame must surface as a thrown
+                            // error: a 200 carrying an error would otherwise read
+                            // as an empty reply and never trigger the caller's
+                            // retry.
+                            if let err = event["error"] as? [String: Any],
+                               let message = err["message"] as? String {
+                                throw LLMError.providerError(message: message)
                             }
-                            if let usage = event["usage"] as? [String: Any] {
-                                continuation.yield(.usage(self.parseChatCompletionsUsage(usage)))
-                            }
-                        } else {
-                            if let text = self.parseResponsesAPITextDelta(event) {
-                                continuation.yield(.text(text))
-                            }
-                            if let usage = self.parseResponsesAPIUsage(event) {
-                                continuation.yield(.usage(usage))
+
+                            if self.usesChatCompletionsAPI {
+                                if let choices = event["choices"] as? [[String: Any]],
+                                   let delta = choices.first?["delta"] as? [String: Any],
+                                   let text = delta["content"] as? String {
+                                    continuation.yield(.text(text))
+                                }
+                                if let usage = event["usage"] as? [String: Any] {
+                                    continuation.yield(.usage(self.parseChatCompletionsUsage(usage)))
+                                }
+                            } else {
+                                if let text = self.parseResponsesAPITextDelta(event) {
+                                    continuation.yield(.text(text))
+                                }
+                                if let usage = self.parseResponsesAPIUsage(event) {
+                                    continuation.yield(.usage(usage))
+                                }
                             }
                         }
                     }
@@ -1036,6 +1089,9 @@ final class OpenAIProvider: LLMProvider {
         for (key, value) in extraHeaders {
             request.setValue(value, forHTTPHeaderField: key)
         }
+        for (key, value) in extraAuthHeaders?(token) ?? [:] {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
         // [T-copilot-per-request-headers] The agent loop's own request path —
         // this is where `X-Initiator: agent` actually matters.
         for (key, value) in perRequestHeaders?(body) ?? [:] {
@@ -1205,6 +1261,9 @@ final class OpenAIProvider: LLMProvider {
         for (key, value) in extraHeaders {
             request.setValue(value, forHTTPHeaderField: key)
         }
+        for (key, value) in extraAuthHeaders?(token) ?? [:] {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
         // [T-copilot-per-request-headers] This builder takes `messages` rather
         // than an assembled body, so hand the hook the same `messages` key the
         // other two sites carry — the closure only ever reads the message list.
@@ -1326,6 +1385,9 @@ final class OpenAIProvider: LLMProvider {
         }
 
         for (key, value) in extraHeaders {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        for (key, value) in extraAuthHeaders?(token) ?? [:] {
             request.setValue(value, forHTTPHeaderField: key)
         }
         // [T-copilot-per-request-headers] Responses-API shape: the message list
@@ -1823,6 +1885,9 @@ final class OpenAIProvider: LLMProvider {
         for (key, value) in extraHeaders {
             request.setValue(value, forHTTPHeaderField: key)
         }
+        for (key, value) in extraAuthHeaders?(token) ?? [:] {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
         // [T-opencode-every-entry] Per-request headers (OpenCode session,
         // Copilot) apply here too, not only on the conversation builders.
         for (key, value) in perRequestHeaders?([:]) ?? [:] {
@@ -2018,6 +2083,9 @@ final class OpenAIProvider: LLMProvider {
         let token = try await getToken()
         applyKeyAuth(&request, token: token)
         for (key, value) in extraHeaders {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        for (key, value) in extraAuthHeaders?(token) ?? [:] {
             request.setValue(value, forHTTPHeaderField: key)
         }
         // [T-opencode-every-entry] Per-request headers (OpenCode session,

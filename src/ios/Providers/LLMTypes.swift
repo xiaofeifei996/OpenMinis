@@ -857,6 +857,12 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
             supportedModalities: ProviderType.autoClaw.defaultModality,
             supportedAuth: [.oauth]
         ),
+        // Trae (字节跳动). Its models are text-only on this wire — the body
+        // carries no image blocks — so the row uses the type's own answer.
+        "Trae": ModelCapabilities(
+            supportedModalities: ProviderType.trae.defaultModality,
+            supportedAuth: [.oauth]
+        ),
     ]
 
     /// Default capabilities when the provider is unknown.

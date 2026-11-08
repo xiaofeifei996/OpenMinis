@@ -3339,6 +3339,40 @@ final class ProviderConfigStore: ObservableObject {
                 token = try await RaccoonOAuthManager.shared.validAccessToken(instanceId: instance.id)
             }
             return try await RaccoonOAuthFlow.fetchModels(accessToken: token)
+        case (.trae, _):
+            // The directory is a POST that names a roster function, and its
+            // entries are the only callable model ids.
+            let token: String
+            if let manual = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id, account: "manual-oauth-token"
+            ), !manual.isEmpty {
+                token = manual
+            } else {
+                token = try await TraeAccountManager.shared.validAccessToken(instanceId: instance.id)
+            }
+            let origin = instance.effectiveCustomBaseURL
+                ?? TraeAccountManager.apiOrigin(instanceId: instance.id)
+                ?? TraeAPI.Site.china.apiOrigin
+            let ids = TraeAccountManager.extraHeaderValues(instanceId: instance.id)
+            var headers = TraeAPI.clientHeaders()
+            headers.merge(TraeAPI.accountHeaders(
+                token: token, userID: ids.userID,
+                machineID: ids.machineID, deviceID: ids.deviceID
+            )) { _, new in new }
+            let roster = await TraeAPI.roster(origin: origin, headers: headers)
+            guard !roster.isEmpty else { throw ModelRefreshError.noCredential }
+            return roster.map { entry in
+                LLMModel(
+                    id: entry.id,
+                    displayName: entry.displayName,
+                    provider: "Trae",
+                    modalityOverride: .textOnly,
+                    contextWindow: entry.contextWindow,
+                    maxOutputTokens: entry.maxTokens,
+                    supportsReasoning: entry.reasoning ? nil : false
+                )
+            }
+
         case (.autoClaw, _):
             // Both the sign-in session and a pasted bearer read the same
             // account-scoped catalog; its entries carry the route id.
@@ -3543,6 +3577,7 @@ final class ProviderConfigStore: ObservableObject {
         case .workBuddyChina: return "https://copilot.tencent.com/v2"
         case .raccoon: return RaccoonOAuthFlow.llmBase
         case .autoClaw: return AutoClawAPI.defaultBase
+        case .trae: return TraeAPI.Site.china.apiOrigin
         case .gemini: return "https://generativelanguage.googleapis.com"
         case .openRouter: return "https://openrouter.ai/api"
         case .antigravity: return nil // No public base URL

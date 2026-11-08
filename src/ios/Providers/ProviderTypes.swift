@@ -37,6 +37,10 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
     /// required system-prompt identity line and a `max_tokens` floor. All three
     /// live in `AutoClawAPI` so the rest of the app sees a normal provider.
     case autoClaw
+    /// Trae (字节跳动 IDE), both builds. OpenAI-shaped only in appearance: the
+    /// body carries Trae's own fields and the response is a custom event
+    /// stream, so it brings its own translator and body builder.
+    case trae
     /// Sentinel for a provider type this app build doesn't recognize — e.g. a
     /// NEWER build synced an instance whose `provider_type` string isn't a known
     /// case here. We DECODE to this instead of throwing/dropping, so the instance
@@ -65,6 +69,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .workBuddyChina: return "WorkBuddy 中国版"
         case .raccoon: return "小浣熊（商汤）"
         case .autoClaw: return "AutoClaw（智谱 AutoGLM）"
+        case .trae: return "Trae（字节跳动）"
         case .unsupported: return "Unsupported"
         }
     }
@@ -103,6 +108,9 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .autoClaw:
             // The gateway owns the model list; its entries also carry the route
             // id (the billing channel) that requests must echo back.
+            return true
+        case .trae:
+            // The directory's roster is the only list of callable models.
             return true
         case .openAI:
             // OpenAIModelsAPI.fetchModelsOAuth() is a compiled-in list.
@@ -156,6 +164,20 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
             // so a brand-new install can still send a request before the first
             // catalog refresh lands.
             return AutoClawAPI.staticModels
+        case .trae:
+            // One sane default so a fresh install can send a request before
+            // the first roster refresh lands. Every other id comes from the
+            // account's own directory.
+            return [
+                LLMModel(
+                    id: TraeAPI.defaultModel,
+                    displayName: "Auto",
+                    provider: "Trae",
+                    modalityOverride: .textOnly,
+                    contextWindow: 200_000,
+                    maxOutputTokens: 64_000
+                )
+            ]
         case .unsupported: return []
         }
     }
@@ -186,6 +208,8 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
             return "使用小浣熊账号登录（非官方接口）"
         case .autoClaw:
             return "使用智谱账号登录（手机验证码，非官方接口）"
+        case .trae:
+            return "使用 Trae 账号登录（内置浏览器，非官方接口）"
         case .antigravity:
             return AppLocalized("\(builtInModels.count) built-in models")
         case .unsupported:
@@ -208,6 +232,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .workBuddyChina: return .vision
         case .raccoon: return .vision
         case .autoClaw: return .vision
+        case .trae: return .textOnly
         case .unsupported: return .vision
         }
     }

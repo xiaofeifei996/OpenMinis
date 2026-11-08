@@ -1009,6 +1009,7 @@ struct AddProviderView: View {
         case .workBuddyChina: return "https://copilot.tencent.com/v2"
         case .raccoon: return RaccoonOAuthFlow.llmBase
         case .autoClaw: return AutoClawAPI.defaultBase
+        case .trae: return TraeAPI.Site.china.apiOrigin
         default: return "https://api.example.com"
         }
     }
@@ -1106,6 +1107,10 @@ struct AddProviderView: View {
                 // The phone + SMS flow needs input, so it runs in
                 // AutoClawLoginSheet rather than inline here.
                 break
+            case .trae:
+                // Browser sign-in: the sheet presents a Safari page and the
+                // loopback server in TraeSignIn answers it.
+                try await TraeAccountManager.shared.signIn(instanceId: pendingInstanceId)
             case .workBuddyChina:
                 let login = try await WorkBuddyChinaOAuthFlow.begin()
                 await WorkBuddyChinaOAuthFlow.openAuthorizationPage(login)
@@ -1204,6 +1209,9 @@ struct AddProviderView: View {
         case .autoClaw:
             token = ProviderKeychainHelper.loadOAuthString(
                 instanceId: pendingInstanceId, account: AutoClawKeychain.access)
+        case .trae:
+            token = ProviderKeychainHelper.loadOAuthString(
+                instanceId: pendingInstanceId, account: TraeKeychain.access)
         case .githubCopilot:
             // The GitHub token is the credential worth showing; the session
             // token is derived and rotates every ~25 minutes.
@@ -1251,6 +1259,11 @@ struct AddProviderView: View {
                 }
                 for account in [AutoClawKeychain.access, AutoClawKeychain.refresh,
                                 AutoClawKeychain.expiry, AutoClawKeychain.phone] {
+                    ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: account)
+                }
+                for account in [TraeKeychain.access, TraeKeychain.refresh, TraeKeychain.expiry,
+                                TraeKeychain.userID, TraeKeychain.machineID, TraeKeychain.deviceID,
+                                TraeKeychain.gate, TraeKeychain.site, TraeKeychain.apiOrigin] {
                     ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: account)
                 }
                 // OpenRouter OAuth stores a permanent API key, not an OAuth token
@@ -1305,6 +1318,7 @@ struct AddProviderView: View {
         case .workBuddyChina: return "使用WorkBuddy 登录"
         case .raccoon: return "使用小浣熊账号登录"
         case .autoClaw: return "使用智谱账号登录"
+        case .trae: return "使用 Trae 账号登录"
         case .unsupported: return AppLocalized("Sign In")
         }
     }
@@ -1324,6 +1338,7 @@ struct AddProviderView: View {
         case .workBuddyChina: return "WorkBuddy access token"
         case .raccoon: return "xiaohuanxiong.com access token"
         case .autoClaw: return "AutoClaw access token"
+        case .trae: return ""
         case .unsupported: return ""
         }
     }
@@ -1342,6 +1357,7 @@ struct AddProviderView: View {
         case .workBuddyChina: return "WorkBuddy 中国版"
         case .raccoon: return "小浣熊（商汤）"
         case .autoClaw: return "AutoClaw（智谱 AutoGLM）"
+        case .trae: return "Trae（字节跳动）"
         case .unsupported: return AppLocalized("Unsupported")
         }
     }
@@ -1384,6 +1400,9 @@ struct AddProviderView: View {
             // (the only path that works for the international host, whose
             // sign-in needs a captcha this app cannot render).
             return [.oauth]
+        case .trae:
+            // Browser sign-in, plus the same manual escape hatch.
+            return [.oauth]
         case .openAIResponses, .gemini:
             return [.apiKey]
         default:
@@ -1405,6 +1424,10 @@ struct AddProviderView: View {
             return "使用智谱账号手机验证码登录（国内版）。这是非官方接口，可能随时变更；请遵守上游条款。"
         case (.autoClaw, .apiKey):
             return "粘贴 AutoClaw 客户端的 access token；国际版请同时填写 Base URL（https://autoglm-api.autoglm.ai）。"
+        case (.trae, .oauth):
+            return "使用 Trae 账号在应用内浏览器登录（自动识别国内版/国际版）。非官方接口，请遵守上游条款。"
+        case (.trae, .apiKey):
+            return "粘贴 Trae 客户端的 Cloud-IDE-JWT。"
         case (_, .apiKey):
             return AppLocalized("Use an API key from your \(type.displayName) account")
         case (.anthropic, .oauth):
@@ -1474,6 +1497,9 @@ struct AddProviderView: View {
         case .autoClaw:
             Image(systemName: "wand.and.stars")
                 .foregroundStyle(.teal)
+        case .trae:
+            Image(systemName: "chevron.left.forwardslash.chevron.right")
+                .foregroundStyle(.indigo)
         case .githubCopilot:
             Image(systemName: "chevron.left.forwardslash.chevron.right")
                 .foregroundStyle(.primary)
@@ -1497,6 +1523,7 @@ struct AddProviderView: View {
         case .workBuddyChina: return .blue
         case .raccoon: return .orange
         case .autoClaw: return .teal
+        case .trae: return .indigo
         case .unsupported: return .gray
         }
     }

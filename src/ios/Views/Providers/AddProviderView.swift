@@ -179,6 +179,7 @@ struct AddProviderView: View {
     @State private var showKimiLogin = false
     /// [T-copilot-provider] Same device-code shape as Kimi's.
     @State private var showCopilotLogin = false
+    @State private var showAutoClawLogin = false
     @State private var oauthAuthTime: Date?
     @State private var showDataSharingConsent = false
     @State private var showImportFile = false
@@ -348,6 +349,17 @@ struct AddProviderView: View {
                 if success {
                     oauthAuthTime = Date()
                     oauthMaskedToken = loadMaskedToken(type: .kimiCode)
+                    pendingOAuthDone = true
+                }
+            }
+        }
+        .sheet(isPresented: $showAutoClawLogin) {
+            // 手机验证码登录。成功时与 startOAuth() 的收尾保持一致：标记 OAuth
+            // 完成并显示掩码 token，之后由 saveOAuthInstance() 落实例。
+            AutoClawLoginSheet(instanceId: pendingInstanceId) { success in
+                if success {
+                    oauthAuthTime = Date()
+                    oauthMaskedToken = loadMaskedToken(type: .autoClaw)
                     pendingOAuthDone = true
                 }
             }
@@ -876,6 +888,8 @@ struct AddProviderView: View {
                         showKimiLogin = true
                     } else if selectedType == .githubCopilot {
                         showCopilotLogin = true
+                    } else if selectedType == .autoClaw {
+                        showAutoClawLogin = true
                     } else {
                         Task { await startOAuth() }
                     }
@@ -994,6 +1008,7 @@ struct AddProviderView: View {
         case .githubCopilot: return CopilotConstants.apiBaseURL
         case .workBuddyChina: return "https://copilot.tencent.com/v2"
         case .raccoon: return RaccoonOAuthFlow.llmBase
+        case .autoClaw: return AutoClawAPI.defaultBase
         default: return "https://api.example.com"
         }
     }
@@ -1087,6 +1102,10 @@ struct AddProviderView: View {
                 // persists the credential under the same Keychain accounts the
                 // request path and the model catalog read.
                 try await RaccoonOAuthManager.shared.login(instanceId: pendingInstanceId)
+            case .autoClaw:
+                // The phone + SMS flow needs input, so it runs in
+                // AutoClawLoginSheet rather than inline here.
+                break
             case .workBuddyChina:
                 let login = try await WorkBuddyChinaOAuthFlow.begin()
                 await WorkBuddyChinaOAuthFlow.openAuthorizationPage(login)
@@ -1182,6 +1201,9 @@ struct AddProviderView: View {
         case .raccoon:
             token = ProviderKeychainHelper.loadOAuthString(
                 instanceId: pendingInstanceId, account: RaccoonKeychain.access)
+        case .autoClaw:
+            token = ProviderKeychainHelper.loadOAuthString(
+                instanceId: pendingInstanceId, account: AutoClawKeychain.access)
         case .githubCopilot:
             // The GitHub token is the credential worth showing; the session
             // token is derived and rotates every ~25 minutes.
@@ -1225,6 +1247,10 @@ struct AddProviderView: View {
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-enterprise-id")
                 for account in [RaccoonKeychain.access, RaccoonKeychain.refresh,
                                 RaccoonKeychain.expiry, RaccoonKeychain.userID] {
+                    ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: account)
+                }
+                for account in [AutoClawKeychain.access, AutoClawKeychain.refresh,
+                                AutoClawKeychain.expiry, AutoClawKeychain.phone] {
                     ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: account)
                 }
                 // OpenRouter OAuth stores a permanent API key, not an OAuth token
@@ -1278,6 +1304,7 @@ struct AddProviderView: View {
         case .githubCopilot: return AppLocalized("Sign in with GitHub")
         case .workBuddyChina: return "使用WorkBuddy 登录"
         case .raccoon: return "使用小浣熊账号登录"
+        case .autoClaw: return "使用智谱账号登录"
         case .unsupported: return AppLocalized("Sign In")
         }
     }
@@ -1296,6 +1323,7 @@ struct AddProviderView: View {
         case .githubCopilot: return "" // OAuth only
         case .workBuddyChina: return "WorkBuddy access token"
         case .raccoon: return "xiaohuanxiong.com access token"
+        case .autoClaw: return "AutoClaw access token"
         case .unsupported: return ""
         }
     }
@@ -1313,6 +1341,7 @@ struct AddProviderView: View {
         case .githubCopilot: return "GitHub Copilot"
         case .workBuddyChina: return "WorkBuddy 中国版"
         case .raccoon: return "小浣熊（商汤）"
+        case .autoClaw: return "AutoClaw（智谱 AutoGLM）"
         case .unsupported: return AppLocalized("Unsupported")
         }
     }
@@ -1350,6 +1379,11 @@ struct AddProviderView: View {
             // Manually" block still accepts a bearer token copied out of the
             // vendor's own web client, which the factory honours first.
             return [.oauth]
+        case .autoClaw:
+            // Same shape: SMS sign-in, or a token pasted into the manual block
+            // (the only path that works for the international host, whose
+            // sign-in needs a captcha this app cannot render).
+            return [.oauth]
         case .openAIResponses, .gemini:
             return [.apiKey]
         default:
@@ -1367,6 +1401,10 @@ struct AddProviderView: View {
             return "使用小浣熊（商汤）账号登录。非官方接口，可能随时变更；请遵守上游条款，勿用于批量或商业用途。"
         case (.raccoon, .apiKey):
             return "粘贴 xiaohuanxiong.com 网页端请求头里的 Bearer token。"
+        case (.autoClaw, .oauth):
+            return "使用智谱账号手机验证码登录（国内版）。这是非官方接口，可能随时变更；请遵守上游条款。"
+        case (.autoClaw, .apiKey):
+            return "粘贴 AutoClaw 客户端的 access token；国际版请同时填写 Base URL（https://autoglm-api.autoglm.ai）。"
         case (_, .apiKey):
             return AppLocalized("Use an API key from your \(type.displayName) account")
         case (.anthropic, .oauth):
@@ -1433,6 +1471,9 @@ struct AddProviderView: View {
         case .raccoon:
             Image(systemName: "pawprint.fill")
                 .foregroundStyle(.orange)
+        case .autoClaw:
+            Image(systemName: "wand.and.stars")
+                .foregroundStyle(.teal)
         case .githubCopilot:
             Image(systemName: "chevron.left.forwardslash.chevron.right")
                 .foregroundStyle(.primary)
@@ -1455,6 +1496,7 @@ struct AddProviderView: View {
         case .githubCopilot: return .primary
         case .workBuddyChina: return .blue
         case .raccoon: return .orange
+        case .autoClaw: return .teal
         case .unsupported: return .gray
         }
     }

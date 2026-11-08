@@ -129,6 +129,8 @@ extension AIChatViewModel {
             return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeWorkBuddyChinaProvider(instance: instance, model: entry.model)))
         case .raccoon:
             return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeRaccoonProvider(instance: instance, model: entry.model)))
+        case .autoClaw:
+            return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeAutoClawProvider(instance: instance, model: entry.model)))
         case .githubCopilot:
             // [T-copilot-no-chat-warning] No warning in the chat.
             //

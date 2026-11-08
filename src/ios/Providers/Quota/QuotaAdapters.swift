@@ -27,7 +27,7 @@ import Foundation
 struct QuotaInstanceDescriptor: Sendable, Equatable {
     enum ProviderKind: String, Sendable {
         case openAI, anthropic, gemini, antigravity, openRouter, openAIResponses
-        case xAI, kimiCode, githubCopilot, workBuddyChina, raccoon, unsupported
+        case xAI, kimiCode, githubCopilot, workBuddyChina, raccoon, autoClaw, unsupported
     }
 
     var instanceId: String
@@ -79,7 +79,7 @@ enum QuotaVendorDetector {
         // vendor's own web console — no documented API, so the passive
         // "unsupported" adapter is the honest answer. A custom base URL still
         // resolves through the relay path above.
-        case .workBuddyChina, .raccoon: return .unknown
+        case .workBuddyChina, .raccoon, .autoClaw: return .unknown
         case .unsupported: return .unknown
         }
     }

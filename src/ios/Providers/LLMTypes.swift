@@ -851,6 +851,12 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
             supportedModalities: ProviderType.raccoon.defaultModality,
             supportedAuth: [.oauth]
         ),
+        // AutoClaw (智谱 AutoGLM). Same reason: a provider string this app owns,
+        // so without a row the lookup MISSES and every model reads as text-only.
+        "AutoClaw": ModelCapabilities(
+            supportedModalities: ProviderType.autoClaw.defaultModality,
+            supportedAuth: [.oauth]
+        ),
     ]
 
     /// Default capabilities when the provider is unknown.

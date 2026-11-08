@@ -43,6 +43,9 @@ jobs:
             src/ios/Providers/WorkBuddy/WorkBuddyChinaOAuthManager.swift \
             src/ios/Providers/Raccoon/RaccoonOAuthFlow.swift \
             src/ios/Providers/Raccoon/RaccoonOAuthManager.swift \
+            src/ios/Providers/AutoClaw/AutoClawAPI.swift \
+            src/ios/Providers/AutoClaw/AutoClawAccountManager.swift \
+            src/ios/Views/Providers/AutoClawLoginSheet.swift \
             src/ios/Providers/LLMProviderFactory.swift \
             src/ios/Views/Providers/AddProviderView.swift \
             src/ios/Providers/ProviderTypes.swift

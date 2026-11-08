@@ -3339,6 +3339,19 @@ final class ProviderConfigStore: ObservableObject {
                 token = try await RaccoonOAuthManager.shared.validAccessToken(instanceId: instance.id)
             }
             return try await RaccoonOAuthFlow.fetchModels(accessToken: token)
+        case (.autoClaw, _):
+            // Both the sign-in session and a pasted bearer read the same
+            // account-scoped catalog; its entries carry the route id.
+            let token: String
+            if let manual = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id, account: "manual-oauth-token"
+            ), !manual.isEmpty {
+                token = manual
+            } else {
+                token = try await AutoClawAccountManager.shared.validAccessToken(instanceId: instance.id)
+            }
+            return try await AutoClawAPI.fetchModels(
+                accessToken: token, root: instance.effectiveCustomBaseURL)
         case (.githubCopilot, _):
             // [T-copilot-provider] Always the OAuth path — there is no API-key
             // form of Copilot. The session token is minted on demand, so a
@@ -3529,6 +3542,7 @@ final class ProviderConfigStore: ObservableObject {
         case .githubCopilot: return CopilotConstants.apiBaseURL
         case .workBuddyChina: return "https://copilot.tencent.com/v2"
         case .raccoon: return RaccoonOAuthFlow.llmBase
+        case .autoClaw: return AutoClawAPI.defaultBase
         case .gemini: return "https://generativelanguage.googleapis.com"
         case .openRouter: return "https://openrouter.ai/api"
         case .antigravity: return nil // No public base URL

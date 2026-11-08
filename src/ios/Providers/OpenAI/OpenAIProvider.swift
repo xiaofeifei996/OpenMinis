@@ -164,6 +164,25 @@ final class OpenAIProvider: LLMProvider {
     /// request builders stay free of provider-specific branching.
     var perRequestHeaders: (@Sendable ([String: Any]) -> [String: String])?
 
+    /// Header carrying the bearer credential.
+    ///
+    /// Defaults to `Authorization`, which every OpenAI-compatible gateway reads.
+    /// AutoClaw's desktop gateway fingerprints a different header
+    /// (`X-Authorization`), so the name is a per-instance fact rather than
+    /// something a caller patches by adding a second header.
+    var authHeaderName: String = "Authorization"
+
+    /// Last chance to rewrite a Chat Completions body before it is serialized.
+    ///
+    /// Some gateways validate the body server-side in ways no client flag can
+    /// express — AutoClaw answers an empty 406 to a `max_tokens` below 10000 and
+    /// to any system prompt that does not open with its client identity
+    /// sentence. A transform here keeps that quirk out of the agent loop, the
+    /// same way `perRequestHeaders` keeps per-request header rules out of it.
+    ///
+    /// Chat Completions only: the Responses API body is never passed through it.
+    var bodyTransform: (@Sendable ([String: Any]) -> [String: Any])?
+
     /// [T-model-use-image-passthrough GH#62] Arbitrary extra fields merged into the
     /// /images/generations JSON body, so `minis-model-use` can pass provider-specific
     /// params our fixed schema never modeled (e.g. Volcengine Seedream's `image` for
@@ -422,6 +441,14 @@ final class OpenAIProvider: LLMProvider {
     /// Apply auth to a non-OAuth request. Azure uses the `api-key` header; every
     /// other OpenAI-compatible endpoint uses `Authorization: Bearer`. Centralized
     /// so the Azure branch can never accidentally set the wrong header.
+    /// Serialize a Chat Completions body, giving a provider-specific transform
+    /// the last word. Key ordering stays sorted so identical requests stay
+    /// byte-identical (DeepSeek's prefix cache).
+    private func serializedChatBody(_ body: [String: Any]) throws -> Data {
+        let final = bodyTransform?(body) ?? body
+        return try JSONSerialization.data(withJSONObject: final, options: [.sortedKeys])
+    }
+
     private func applyKeyAuth(_ request: inout URLRequest, token: String) {
         // [T-empty-key-compat-endpoints] A keyless third-party endpoint
         // (ollama, LM Studio, LiteLLM, private relays) is a supported
@@ -432,7 +459,7 @@ final class OpenAIProvider: LLMProvider {
         if isAzure {
             request.setValue(token, forHTTPHeaderField: "api-key")
         } else {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue("Bearer \(token)", forHTTPHeaderField: authHeaderName)
         }
     }
 
@@ -1024,7 +1051,7 @@ final class OpenAIProvider: LLMProvider {
         // Without this, Swift's dictionary iteration order randomizes top-level /
         // nested key order across calls and the cache misses on every request.
         if isCodexOAuth { Self.applyCodexRoutingHint(to: &request, body: body) }
-        request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+        request.httpBody = try serializedChatBody(body)
 
         #if DEBUG
         // Capture the actual on-wire body bytes for debug.llmRequests, so parity
@@ -1234,7 +1261,7 @@ final class OpenAIProvider: LLMProvider {
         // [T-ios-openai-body-oom] See streamRaw — carries the conversation too.
         try guardRequestBodySize(body, context: "chatCompletions")
 
-        request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+        request.httpBody = try serializedChatBody(body)
 
         #if DEBUG
         logOutgoingRequest(url: url, headers: request.allHTTPHeaderFields, body: body)

@@ -623,6 +623,9 @@
 		D0A0B0C0D0E0F00200000001 /* WorkBuddyChinaOAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F00200000002 /* WorkBuddyChinaOAuthManager.swift */; };
 		D0A0B0C0D0E0F00300000001 /* RaccoonOAuthFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F00300000002 /* RaccoonOAuthFlow.swift */; };
 		D0A0B0C0D0E0F00400000001 /* RaccoonOAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F00400000002 /* RaccoonOAuthManager.swift */; };
+		D0A0B0C0D0E0F00500000001 /* AutoClawAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F00500000002 /* AutoClawAPI.swift */; };
+		D0A0B0C0D0E0F00600000001 /* AutoClawAccountManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F00600000002 /* AutoClawAccountManager.swift */; };
+		D0A0B0C0D0E0F00700000001 /* AutoClawLoginSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F00700000002 /* AutoClawLoginSheet.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1449,6 +1452,9 @@
 		D0A0B0C0D0E0F00200000002 /* WorkBuddyChinaOAuthManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkBuddyChinaOAuthManager.swift; sourceTree = "<group>"; };
 		D0A0B0C0D0E0F00300000002 /* RaccoonOAuthFlow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RaccoonOAuthFlow.swift; sourceTree = "<group>"; };
 		D0A0B0C0D0E0F00400000002 /* RaccoonOAuthManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RaccoonOAuthManager.swift; sourceTree = "<group>"; };
+		D0A0B0C0D0E0F00500000002 /* AutoClawAPI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AutoClawAPI.swift; sourceTree = "<group>"; };
+		D0A0B0C0D0E0F00600000002 /* AutoClawAccountManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AutoClawAccountManager.swift; sourceTree = "<group>"; };
+		D0A0B0C0D0E0F00700000002 /* AutoClawLoginSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AutoClawLoginSheet.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -1794,6 +1800,7 @@
 				42A3821DABA8773E8A5BA57E /* Voice */,
 				D0A0B0C0D0E0F00100000003 /* WorkBuddy */,
 				D0A0B0C0D0E0F00300000003 /* Raccoon */,
+				D0A0B0C0D0E0F00500000003 /* AutoClaw */,
 			);
 			path = Providers;
 			sourceTree = "<group>";
@@ -2646,6 +2653,7 @@
 			children = (
 				E5D00032 /* AddProviderView.swift */,
 				E5KIMIUI2 /* KimiDeviceLoginSheet.swift */,
+				D0A0B0C0D0E0F00700000002 /* AutoClawLoginSheet.swift */,
 				E5D00038 /* AgentLoopModelsView.swift */,
 				E5D00034 /* ModelGroupDetailView.swift */,
 				E5D00033 /* ModelGroupsView.swift */,
@@ -2734,6 +2742,15 @@
 				D0A0B0C0D0E0F00400000002 /* RaccoonOAuthManager.swift */,
 			);
 			path = Raccoon;
+			sourceTree = "<group>";
+		};
+		D0A0B0C0D0E0F00500000003 /* AutoClaw */ = {
+			isa = PBXGroup;
+			children = (
+				D0A0B0C0D0E0F00500000002 /* AutoClawAPI.swift */,
+				D0A0B0C0D0E0F00600000002 /* AutoClawAccountManager.swift */,
+			);
+			path = AutoClaw;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -3119,6 +3136,9 @@
 				D0A0B0C0D0E0F00100000001 /* WorkBuddyChinaOAuthFlow.swift in Sources */,
 				D0A0B0C0D0E0F00300000001 /* RaccoonOAuthFlow.swift in Sources */,
 				D0A0B0C0D0E0F00400000001 /* RaccoonOAuthManager.swift in Sources */,
+				D0A0B0C0D0E0F00500000001 /* AutoClawAPI.swift in Sources */,
+				D0A0B0C0D0E0F00600000001 /* AutoClawAccountManager.swift in Sources */,
+				D0A0B0C0D0E0F00700000001 /* AutoClawLoginSheet.swift in Sources */,
 				AC0000202 /* ProviderCustomizationGenerated.swift in Sources */,
 				E54000AC1 /* DebugSkillGenerated.swift in Sources */,
 				E5FP00100 /* AppGroupChangeWatcher.swift in Sources */,

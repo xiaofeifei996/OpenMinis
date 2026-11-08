@@ -97,6 +97,9 @@ enum ProviderMigration {
             case .raccoon:
                 // Raccoon (小浣熊) is new as well; no legacy singleton token.
                 break
+            case .autoClaw:
+                // AutoClaw is new as well; no legacy singleton token.
+                break
             case .unsupported:
                 break
             }

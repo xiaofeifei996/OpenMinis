@@ -11,6 +11,7 @@ struct ProviderInstanceDetailView: View {
     @State private var showKimiLogin = false
     /// [T-copilot-provider] Same device-code shape as Kimi's.
     @State private var showCopilotLogin = false
+    @State private var showAutoClawLogin = false
     @State private var keyInputText = ""
     @State private var isFetchingModels = false
     /// [T-thinking-rules-ui-fix] Owned HERE, not inside ThinkingRulesSection: a .sheet on a
@@ -92,6 +93,16 @@ struct ProviderInstanceDetailView: View {
                 // model reconcile as Kimi — the catalog is empty until the
                 // server has been asked, so this refresh is what populates it.
                 CopilotDeviceLoginSheet(instanceId: instance.id) { success in
+                    oauthRefreshTrigger.toggle()
+                    if success, instance.providerType.oauthSupportsModelDiscovery {
+                        Task { await store.refreshModels(for: instance) }
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showAutoClawLogin) {
+            if let instance = instance {
+                AutoClawLoginSheet(instanceId: instance.id) { success in
                     oauthRefreshTrigger.toggle()
                     if success, instance.providerType.oauthSupportsModelDiscovery {
                         Task { await store.refreshModels(for: instance) }
@@ -630,6 +641,8 @@ struct ProviderInstanceDetailView: View {
             showKimiLogin = true
         } else if instance.providerType == .githubCopilot {
             showCopilotLogin = true
+        } else if instance.providerType == .autoClaw {
+            showAutoClawLogin = true
         } else {
             Task {
                 await oauthLogin(instance)
@@ -655,6 +668,7 @@ struct ProviderInstanceDetailView: View {
         case .githubCopilot: return CopilotConstants.apiBaseURL
         case .workBuddyChina: return "https://copilot.tencent.com/v2"
         case .raccoon: return RaccoonOAuthFlow.llmBase
+        case .autoClaw: return AutoClawAPI.defaultBase
         case .unsupported: return "—"
         }
     }
@@ -1097,6 +1111,7 @@ struct ProviderInstanceDetailView: View {
         case .githubCopilot: return CopilotOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .workBuddyChina: return false // dedicated WorkBuddy China OAuth flow
         case .raccoon: return RaccoonOAuthManager.shared.isAuthenticated(instanceId: instance.id)
+        case .autoClaw: return AutoClawAccountManager.shared.isAuthenticated(instanceId: instance.id)
         case .unsupported: return false // synced from newer build
         }
     }
@@ -1171,6 +1186,14 @@ struct ProviderInstanceDetailView: View {
                     RaccoonOAuthManager.shared.accountID(instanceId: instance.id).map { "ID: \($0.prefix(8))" }]
                 .compactMap { $0 }
                 .joined(separator: " · ")
+        case .autoClaw:
+            guard AutoClawAccountManager.shared.isAuthenticated(instanceId: instance.id) else {
+                return AppLocalized("Not authenticated")
+            }
+            return [AutoClawAccountManager.shared.maskedPhone(instanceId: instance.id),
+                    AutoClawAccountManager.shared.maskedToken(instanceId: instance.id)]
+                .compactMap { $0 }
+                .joined(separator: " · ")
         case .unsupported:
             return AppLocalized("Unsupported in this app version")
         }
@@ -1189,6 +1212,7 @@ struct ProviderInstanceDetailView: View {
         case .githubCopilot: return AppLocalized("Sign in with GitHub")
         case .workBuddyChina: return "使用WorkBuddy 登录"
         case .raccoon: return "使用小浣熊账号登录"
+        case .autoClaw: return "使用智谱账号登录"
         case .unsupported: return AppLocalized("Sign In")
         }
     }
@@ -1207,6 +1231,7 @@ struct ProviderInstanceDetailView: View {
             case .githubCopilot: break // device-code flow runs in CopilotDeviceLoginSheet
             case .workBuddyChina: break // dedicated WorkBuddy China sign-in flow is launched by the view
             case .raccoon: try await RaccoonOAuthManager.shared.login(instanceId: instance.id)
+            case .autoClaw: break // phone + SMS flow runs in AutoClawLoginSheet
             case .unsupported: break
             }
             // [T-provider-oauth-model-discovery] Reconcile models on a
@@ -1257,6 +1282,7 @@ struct ProviderInstanceDetailView: View {
         case .githubCopilot: CopilotOAuthManager.shared.logout(instanceId: instance.id)
         case .workBuddyChina: break // dedicated WorkBuddy China credentials are managed by its OAuth flow
         case .raccoon: RaccoonOAuthManager.shared.logout(instanceId: instance.id)
+        case .autoClaw: AutoClawAccountManager.shared.logout(instanceId: instance.id)
         case .unsupported: break
         }
     }
@@ -1286,6 +1312,8 @@ struct ProviderInstanceDetailView: View {
             token = nil // token export is handled by the dedicated WorkBuddy China flow
         case .raccoon:
             token = try? await RaccoonOAuthManager.shared.validAccessToken(instanceId: instance.id)
+        case .autoClaw:
+            token = try? await AutoClawAccountManager.shared.validAccessToken(instanceId: instance.id)
         case .unsupported:
             token = nil
         }
@@ -1305,6 +1333,7 @@ struct ProviderInstanceDetailView: View {
         case .githubCopilot: return "" // OAuth only
         case .workBuddyChina: return "" // OAuth only
         case .raccoon: return "" // OAuth only
+        case .autoClaw: return "" // OAuth only
         case .antigravity: return "API Key..."
         case .openRouter: return "sk-or-..."
         case .openAIResponses: return "sk-..."

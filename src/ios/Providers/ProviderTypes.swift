@@ -32,6 +32,11 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
     /// code flow. Opt-in and unofficial: the app is not affiliated with the
     /// vendor and the flow can change without notice.
     case raccoon
+    /// Zhipu AutoGLM desktop (AutoClaw). OpenAI-compatible chat behind a
+    /// gateway that fingerprints its own client: a different auth header, a
+    /// required system-prompt identity line and a `max_tokens` floor. All three
+    /// live in `AutoClawAPI` so the rest of the app sees a normal provider.
+    case autoClaw
     /// Sentinel for a provider type this app build doesn't recognize — e.g. a
     /// NEWER build synced an instance whose `provider_type` string isn't a known
     /// case here. We DECODE to this instead of throwing/dropping, so the instance
@@ -59,6 +64,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .githubCopilot: return "GitHub Copilot"
         case .workBuddyChina: return "WorkBuddy 中国版"
         case .raccoon: return "小浣熊（商汤）"
+        case .autoClaw: return "AutoClaw（智谱 AutoGLM）"
         case .unsupported: return "Unsupported"
         }
     }
@@ -93,6 +99,10 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .raccoon:
             // The account-scoped catalog at /model_catalog is the only source
             // of usable model ids; nothing is compiled in.
+            return true
+        case .autoClaw:
+            // The gateway owns the model list; its entries also carry the route
+            // id (the billing channel) that requests must echo back.
             return true
         case .openAI:
             // OpenAIModelsAPI.fetchModelsOAuth() is a compiled-in list.
@@ -141,6 +151,11 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
             // account's own /model_catalog, so a compiled-in list would only go
             // stale or offer models the account cannot use.
             return []
+        case .autoClaw:
+            // A tiny compiled-in fallback (the two models the gateway documents)
+            // so a brand-new install can still send a request before the first
+            // catalog refresh lands.
+            return AutoClawAPI.staticModels
         case .unsupported: return []
         }
     }
@@ -169,6 +184,8 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
             return "使用WorkBuddy 登录"
         case .raccoon:
             return "使用小浣熊账号登录（非官方接口）"
+        case .autoClaw:
+            return "使用智谱账号登录（手机验证码，非官方接口）"
         case .antigravity:
             return AppLocalized("\(builtInModels.count) built-in models")
         case .unsupported:
@@ -190,6 +207,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .githubCopilot: return .vision
         case .workBuddyChina: return .vision
         case .raccoon: return .vision
+        case .autoClaw: return .vision
         case .unsupported: return .vision
         }
     }

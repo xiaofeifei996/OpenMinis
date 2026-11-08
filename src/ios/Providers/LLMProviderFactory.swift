@@ -82,6 +82,8 @@ enum LLMProviderFactory {
             return openCode(makeWorkBuddyChinaProvider(instance: instance, model: entry.model))
         case .raccoon:
             return openCode(makeRaccoonProvider(instance: instance, model: entry.model))
+        case .autoClaw:
+            return openCode(makeAutoClawProvider(instance: instance, model: entry.model))
         case .unsupported:
             throw FactoryError.voiceOnlyProvider
         }
@@ -465,6 +467,59 @@ enum LLMProviderFactory {
             "User-Agent": RaccoonOAuthFlow.userAgent,
             "Accept": "*/*",
         ]) { _, new in new }
+        return provider
+    }
+
+    /// AutoClaw (智谱 AutoGLM 桌面端) — OpenAI-compatible Chat Completions at
+    /// `{root}/autoclaw-proxy/proxy/autoclaw/chat/completions`.
+    ///
+    /// Three facts differ from a normal OpenAI-compatible provider, and all of
+    /// them are gateway-side validation rather than features:
+    ///   * the bearer rides in `X-Authorization`;
+    ///   * `X-Request-Model` carries the FULL route id (which is the model id
+    ///     here), while `body.model` must be the same id with the route prefix
+    ///     stripped — one of them wrong means the wrong billing channel or an
+    ///     unknown model;
+    ///   * `max_tokens` below 10000 and a system prompt without the client
+    ///     identity line each answer a bodyless `406`, so the body is
+    ///     normalised through `AutoClawAPI.normalizeBody`.
+    static func makeAutoClawProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
+        let iid = instance.id
+        let base = AutoClawAPI.llmBase(root: instance.effectiveCustomBaseURL)
+        let provider: OpenAIProvider
+        if let manual = ProviderKeychainHelper.loadOAuthString(
+            instanceId: iid, account: "manual-oauth-token"
+        ), !manual.isEmpty {
+            provider = OpenAIProvider(
+                apiKey: manual, model: model, customBaseURL: base, appendV1Suffix: false)
+        } else {
+            provider = OpenAIProvider(
+                oauthTokenProvider: { try await AutoClawAccountManager.shared.validAccessToken(instanceId: iid) },
+                model: model
+            )
+            // The OAuth initializer leaves these at their defaults (no base,
+            // /v1 appended), which would target api.openai.com.
+            provider.customBaseURL = base
+            provider.appendV1Suffix = false
+        }
+        provider.authHeaderName = "X-Authorization"
+        provider.extraHeaders.merge([
+            "User-Agent": AutoClawAPI.userAgent,
+            "accept": "*/*",
+            // x-tm must never be "linux" on this domain.
+            "x-tm": "win",
+            "x-product": "autoclaw",
+            "x-client-type": "pc",
+            "x-version": AutoClawAPI.clientVersion,
+            "x-lang": "zh-CN",
+            "x-channel": "official",
+            "x_trace_id": "autoclaw-desktop",
+            "x-request-model": model.id,
+        ]) { _, new in new }
+        provider.perRequestHeaders = { _ in
+            ["x-request-id": UUID().uuidString.lowercased()]
+        }
+        provider.bodyTransform = { AutoClawAPI.normalizeBody($0) }
         return provider
     }
 

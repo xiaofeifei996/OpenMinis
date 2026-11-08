@@ -1086,10 +1086,13 @@ final class OpenAIProvider: LLMProvider {
 
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // The token each branch resolved is needed again below (Trae repeats
+        // it in two extra headers), so resolve once here instead of per branch.
+        let resolvedToken = try await getToken()
         for (key, value) in extraHeaders {
             request.setValue(value, forHTTPHeaderField: key)
         }
-        for (key, value) in extraAuthHeaders?(token) ?? [:] {
+        for (key, value) in extraAuthHeaders?(resolvedToken) ?? [:] {
             request.setValue(value, forHTTPHeaderField: key)
         }
         // [T-copilot-per-request-headers] The agent loop's own request path —

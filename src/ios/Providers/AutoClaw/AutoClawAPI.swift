@@ -230,12 +230,15 @@ enum AutoClawAPI {
         root: String? = nil,
         session: URLSession = .shared
     ) async throws -> (accessToken: String, refreshToken: String?) {
-        let root = normalizeRoot(root)
-        var body: [String: Any] = ["refresh_token": stripBearer(refreshToken), "source_id": "autoclaw"]
+        let base = normalizeRoot(root)
+        var body: [String: Any] = [
+            "refresh_token": stripBearer(refreshToken) ?? refreshToken,
+            "source_id": "autoclaw",
+        ]
         if let deviceID, !deviceID.isEmpty { body["device_id"] = deviceID }
 
         func call(_ path: String) async throws -> [String: Any] {
-            try await requestJSON(url: root + path, method: "POST", body: body, token: nil, session: session)
+            try await requestJSON(url: base + path, method: "POST", body: body, token: nil, session: session)
         }
 
         var payload: [String: Any]
@@ -415,7 +418,7 @@ enum AutoClawAPI {
             throw FlowError.invalidResponse
         }
         let code = (json["code"] as? NSNumber)?.intValue
-            ?? (json["code"] as? String).flatMap(Int.init)
+            ?? (json["code"] as? String).flatMap { Int($0) }
         if let code, code != 0 {
             if code == 401 || code == 410000 { throw FlowError.expired }
             let message = loginErrorMessages[code]

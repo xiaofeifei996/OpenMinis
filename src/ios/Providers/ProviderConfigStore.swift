@@ -3294,7 +3294,7 @@ final class ProviderConfigStore: ObservableObject {
             // OAuth-token slot. Prefer that account token for the account-scoped
             // /v3/config catalog; otherwise this branch incorrectly falls through
             // to API-key validation and reports "no API key is set".
-            let region = workBuddyRegion(for: instance)
+            let region = Self.workBuddyRegion(for: instance)
             if let bearer = ProviderKeychainHelper.loadOAuthString(
                 instanceId: instance.id, account: "manual-oauth-token"
             ), !bearer.isEmpty {
@@ -3325,7 +3325,7 @@ final class ProviderConfigStore: ObservableObject {
                 userID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-user-id"),
                 domain: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-domain"),
                 enterpriseID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-enterprise-id"),
-                region: workBuddyRegion(for: instance)
+                region: Self.workBuddyRegion(for: instance)
             )
             guard !models.isEmpty else { throw ModelRefreshError.noCredential }
             return models
@@ -3403,7 +3403,7 @@ final class ProviderConfigStore: ObservableObject {
 
     /// Which WorkBuddy build an instance belongs to. The two share one login
     /// flow and one catalog shape, differing only in `WorkBuddyRegion`.
-    private func workBuddyRegion(for instance: ProviderInstance) -> WorkBuddyRegion {
+    private static func workBuddyRegion(for instance: ProviderInstance) -> WorkBuddyRegion {
         instance.providerType == .workBuddyAI ? .international : .china
     }
 

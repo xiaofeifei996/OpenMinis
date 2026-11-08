@@ -1117,11 +1117,12 @@ struct AddProviderView: View {
                 // the account poll are identical, so only the region differs.
                 let login = try await WorkBuddyChinaOAuthFlow.begin(region: .international)
                 await WorkBuddyChinaOAuthFlow.openAuthorizationPage(login)
-                let token = try await WorkBuddyChinaOAuthFlow.pollToken(for: login)
+                let token = try await WorkBuddyChinaOAuthFlow.pollToken(for: login, region: .international)
                 let account = try await WorkBuddyChinaOAuthFlow.pollAccount(
                     for: login,
                     accessToken: token.accessToken,
-                    domain: token.domain
+                    domain: token.domain,
+                    region: .international
                 )
                 ProviderKeychainHelper.saveOAuthString(
                     token.accessToken,

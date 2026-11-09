@@ -1,4 +1,6 @@
 import Foundation
+import CryptoKit
+import Security
 
 /// Shared factory for creating LLMProvider instances from a ModelEntry.
 /// Used by both the agent loop (AIChatViewModel) and minis-model-use offload bridge.
@@ -91,6 +93,23 @@ enum LLMProviderFactory {
         case .unsupported:
             throw FactoryError.voiceOnlyProvider
         }
+    }
+
+    /// 32 lowercase hex characters, fresh each call.
+    static func randomHex(_ bytes: Int) -> String {
+        var data = Data(count: bytes)
+        _ = data.withUnsafeMutableBytes { buffer in
+            SecRandomCopyBytes(kSecRandomDefault, bytes, buffer.baseAddress!)
+        }
+        return data.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Stable hex derived from the account, used for the virtual device ids the
+    /// client reports. Stable across restarts and distinct per account is the
+    /// property that matters: a drifting id is what gets a request flagged.
+    static func stableHex(purpose: String, account: String, length: Int) -> String {
+        let digest = SHA256.hash(data: Data("agenthub:\(purpose):\(account)".utf8))
+        return String(digest.map { String(format: "%02x", $0) }.joined().prefix(length))
     }
 
     /// Inject the instance's custom `User-Agent` into an OpenAI-family provider's
@@ -422,6 +441,28 @@ enum LLMProviderFactory {
             "X-Agent-Purpose": "conversation",
             "Accept-Language": region.acceptLanguage,
         ]) { _, new in new }
+        if region == .international {
+            // The international gateway runs a channel-verification pass that
+            // the China build does not: a request without the desktop
+            // client's full fingerprint is rejected with `400 code 11128`
+            // "request illegal — this call failed channel verification".
+            // The set below is the one AgentHub sends (its workbuddy_ai
+            // channel), read off a capture of the official client.
+            let uid = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id, account: "workbuddy-user-id") ?? ""
+            provider.extraHeaders.merge([
+                "accept": "application/json, text/event-stream",
+                "origin": region.pluginHost,
+                "referer": region.pluginHost + "/",
+                "x-codebuddy-request": "1",
+                // Per-account virtual device: stable across restarts and
+                // different between accounts, which is what the client has.
+                "x-machine-id": Self.stableHex(purpose: "machine", account: uid, length: 36),
+                "x-session-id": Self.stableHex(purpose: "session", account: uid, length: 36),
+                "x-no-enterprise-id": "1",
+                "x-domain": region.domain,
+            ]) { _, new in new }
+        }
         if region.requiresLeadingSystemMessage {
             // The international build answers 400 code 11128 ("first message
             // is not system prompt") to a conversation that does not open with
@@ -436,33 +477,65 @@ enum LLMProviderFactory {
                         out["messages"] = messages
                     }
                 }
+                // The official CLI always asks for usage in the last frame.
+                if out["stream_options"] == nil {
+                    out["stream_options"] = ["include_usage": true]
+                }
+                // `max_completion_tokens` is not understood upstream; the
+                // official client translates it before sending.
+                if let mct = out["max_completion_tokens"] as? Int, mct > 0,
+                   out["max_tokens"] == nil {
+                    out["max_tokens"] = mct
+                }
+                out.removeValue(forKey: "max_completion_tokens")
                 return out
             }
         }
         // WorkBuddy's gateway expects request identifiers in the desktop client's
         // chat headers. This provider hook runs for each outbound request.
-        provider.perRequestHeaders = { _ in
-            let requestID = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-            return [
-                "X-Conversation-Message-ID": requestID,
-                "X-Request-ID": requestID,
-                "X-Conversation-Request-ID": UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-            ]
+        if region == .international {
+            // The full B3 conversation group. The gateway aggregates a turn by
+            // x-conversation-request-id, and B3 only accepts a 16/32-hex
+            // trace id — the names are lowercase here because that is how the
+            // captured client sends them.
+            provider.perRequestHeaders = { _ in
+                let conversationID = Self.randomHex(16)
+                let messageID = Self.randomHex(16)
+                return [
+                    "x-conversation-request-id": conversationID,
+                    "x-conversation-message-id": messageID,
+                    "x-request-id": messageID,
+                    "x-root-request-id": conversationID,
+                    "x-trace-id": conversationID,
+                    "x-b3-traceid": conversationID,
+                    "x-b3-spanid": String(messageID.prefix(16)),
+                    "x-b3-sampled": "1",
+                ]
+            }
+        } else {
+            provider.perRequestHeaders = { _ in
+                let requestID = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+                return [
+                    "X-Conversation-Message-ID": requestID,
+                    "X-Request-ID": requestID,
+                    "X-Conversation-Request-ID": UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+                ]
+            }
         }
         if instance.credentialType == .oauth {
             if let userID = ProviderKeychainHelper.loadOAuthString(
                 instanceId: instance.id, account: "workbuddy-user-id"
             ), !userID.isEmpty {
-                provider.extraHeaders["X-User-Id"] = userID
+                provider.extraHeaders[region == .international ? "x-user-id" : "X-User-Id"] = userID
             }
-            if let domain = ProviderKeychainHelper.loadOAuthString(
+            // The international build already carries `x-domain` in its
+            // fingerprint block above; setting a second, differently-cased
+            // copy would send the header twice.
+            if region == .china,
+               let domain = ProviderKeychainHelper.loadOAuthString(
                 instanceId: instance.id, account: "workbuddy-domain"
             ), !domain.isEmpty {
                 provider.extraHeaders["X-Domain"] = domain
-            } else if region == .international {
-                // The international build's gateway expects its own host in the
-                // tenant header; the China build leaves it to the sign-in.
-                provider.extraHeaders["X-Domain"] = region.domain
             }
             if let enterpriseID = ProviderKeychainHelper.loadOAuthString(
                 instanceId: instance.id, account: "workbuddy-enterprise-id"

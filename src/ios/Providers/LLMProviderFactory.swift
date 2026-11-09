@@ -96,7 +96,9 @@ enum LLMProviderFactory {
     }
 
     /// 32 lowercase hex characters, fresh each call.
-    static func randomHex(_ bytes: Int) -> String {
+    /// `nonisolated`: the per-request header closure that calls it is
+    /// `@Sendable` and runs off the main actor.
+    nonisolated static func randomHex(_ bytes: Int) -> String {
         var data = Data(count: bytes)
         _ = data.withUnsafeMutableBytes { buffer in
             SecRandomCopyBytes(kSecRandomDefault, bytes, buffer.baseAddress!)
@@ -107,7 +109,7 @@ enum LLMProviderFactory {
     /// Stable hex derived from the account, used for the virtual device ids the
     /// client reports. Stable across restarts and distinct per account is the
     /// property that matters: a drifting id is what gets a request flagged.
-    static func stableHex(purpose: String, account: String, length: Int) -> String {
+    nonisolated static func stableHex(purpose: String, account: String, length: Int) -> String {
         let digest = SHA256.hash(data: Data("agenthub:\(purpose):\(account)".utf8))
         return String(digest.map { String(format: "%02x", $0) }.joined().prefix(length))
     }

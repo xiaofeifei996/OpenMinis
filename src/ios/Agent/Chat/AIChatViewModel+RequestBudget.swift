@@ -461,7 +461,7 @@ extension AIChatViewModel {
         let url = (container ?? minisAppGroupFallbackRoot)
             .appendingPathComponent("MinisConfig", isDirectory: true)
         if container == nil {
-            logger.error("[AppGroup] Missing entitlement for \(SharedContainerStore.appGroupID, privacy: .public); using app-local config storage.")
+            logger.error("[AppGroup] Missing entitlement for \(SharedContainerStore.appGroupID); using app-local config storage.")
         }
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url

@@ -421,7 +421,7 @@ extension AIChatViewModel {
     /// IMPORTANT: this fallback is app-local, not shared with FileProvider
     /// extensions. Shared-file features remain unavailable until the installed
     /// signature grants SharedContainerStore.appGroupID.
-    nonisolated private static var minisAppGroupFallbackRoot: URL {
+    nonisolated static var minisAppGroupFallbackRoot: URL {
         let root = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("Application Support", isDirectory: true)
@@ -445,7 +445,7 @@ extension AIChatViewModel {
         let root = (container ?? minisAppGroupFallbackRoot)
             .appendingPathComponent("MinisFileProvider", isDirectory: true)
         if container == nil {
-            logger.error("[AppGroup] Missing entitlement for \(SharedContainerStore.appGroupID, privacy: .public); using app-local storage. FileProvider sharing is unavailable.")
+            logger.error("[AppGroup] Missing entitlement for \(SharedContainerStore.appGroupID); using app-local storage. FileProvider sharing is unavailable.")
         }
         return root
     }

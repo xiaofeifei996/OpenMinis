@@ -21,11 +21,12 @@ private func jsonData(_ object: [String: Any]) throws -> Data {
     try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
 }
 
+/// The dialect returns bare chunk JSON; the stateful normalizer prefixes it
+/// with `data: `. Accept both so each layer is asserted at its own boundary.
 private func frameObject(_ line: String) throws -> [String: Any] {
-    guard line.hasPrefix("data: ") else {
-        throw TestFailure(message: "Expected SSE data line: \(line)")
-    }
-    return try jsonObject(String(line.dropFirst(6)))
+    if line.hasPrefix("data: ") { return try jsonObject(String(line.dropFirst(6))) }
+    if line.hasPrefix("data:") { return try jsonObject(String(line.dropFirst(5))) }
+    return try jsonObject(line)
 }
 
 private func choice(_ frame: [String: Any]) throws -> [String: Any] {

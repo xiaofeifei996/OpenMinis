@@ -51,6 +51,22 @@ private func expectThrow(_ body: () throws -> Void, _ message: String) throws {
     try check(didThrow, message)
 }
 
+/// URLSession hands a URLProtocol the body as a stream, not `httpBody`.
+private func requestBody(_ request: URLRequest) -> Data {
+    if let body = request.httpBody { return body }
+    guard let stream = request.httpBodyStream else { return Data() }
+    stream.open()
+    defer { stream.close() }
+    var data = Data()
+    var buffer = [UInt8](repeating: 0, count: 4096)
+    while stream.hasBytesAvailable {
+        let count = stream.read(&buffer, maxLength: buffer.count)
+        if count <= 0 { break }
+        data.append(buffer, count: count)
+    }
+    return data
+}
+
 private final class TraeMockURLProtocol: URLProtocol {
     nonisolated(unsafe) static var handler: ((URLRequest) -> (Int, Data))?
 
@@ -185,12 +201,12 @@ private func testDirectoryRequestAndRoster() async throws {
     let request = TraeAPI.directoryRequest(origin: "https://mock.trae.test", function: "solo_work_lite", headers: headers)!
     try check(request.httpMethod == "POST", "Directory request must be POST")
     try check(request.value(forHTTPHeaderField: "X-Test") == "yes", "Directory request dropped caller headers")
-    let requestBody = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
-    try check(requestBody["function"] as? String == "solo_work_lite", "Directory function was not encoded")
-    try check(requestBody["need_prompt"] as? Bool == false, "Directory prompt flag changed")
+    let directoryBody = try JSONSerialization.jsonObject(with: requestBody(request)) as! [String: Any]
+    try check(directoryBody["function"] as? String == "solo_work_lite", "Directory function was not encoded")
+    try check(directoryBody["need_prompt"] as? Bool == false, "Directory prompt flag changed")
 
     TraeMockURLProtocol.handler = { request in
-        let body = (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data())) as? [String: Any] ?? [:]
+        let body = (try? JSONSerialization.jsonObject(with: requestBody(request))) as? [String: Any] ?? [:]
         let function = body["function"] as? String ?? ""
         let entries: [[String: Any]] = function == "solo_work_remote" ? [
             ["config_name": "shared", "display_config": ["display_name": "Remote shared"], "model_detail_list": [["max_tokens": 111]]],

@@ -100,7 +100,7 @@ enum ProviderMigration {
             case .autoClaw:
                 // AutoClaw is new as well; no legacy singleton token.
                 break
-            case .trae:
+            case .trae, .traeInternational:
                 // Trae is new as well; no legacy singleton token.
                 break
             case .unsupported:

@@ -88,7 +88,7 @@ enum LLMProviderFactory {
             return openCode(makeRaccoonProvider(instance: instance, model: entry.model))
         case .autoClaw:
             return openCode(makeAutoClawProvider(instance: instance, model: entry.model))
-        case .trae:
+        case .trae, .traeInternational:
             return openCode(makeTraeProvider(instance: instance, model: entry.model))
         case .unsupported:
             throw FactoryError.voiceOnlyProvider
@@ -654,9 +654,8 @@ enum LLMProviderFactory {
         let iid = instance.id
         // The two builds have different chat hosts, and the sign-in records
         // which one this account belongs to.
-        let origin = instance.effectiveCustomBaseURL
-            ?? TraeAccountManager.apiOrigin(instanceId: iid)
-            ?? TraeAPI.Site.china.apiOrigin
+        let origin = TraeAccountManager.resolvedOrigin(instance: instance)
+        let expectedSite: TraeAPI.Site? = instance.providerType == .traeInternational ? .international : nil
         let provider: OpenAIProvider
         if let manual = ProviderKeychainHelper.loadOAuthString(
             instanceId: iid, account: "manual-oauth-token"
@@ -665,32 +664,46 @@ enum LLMProviderFactory {
                 apiKey: manual, model: model, customBaseURL: origin, appendV1Suffix: false)
         } else {
             provider = OpenAIProvider(
-                oauthTokenProvider: { try await TraeAccountManager.shared.validAccessToken(instanceId: iid) },
+                oauthTokenProvider: { try await TraeAccountManager.shared.validAccessToken(instanceId: iid, expectedSite: expectedSite) },
                 model: model
             )
             // The OAuth initializer leaves these at their defaults (no base URL,
             // /v1 appended), which would target api.openai.com.
             provider.customBaseURL = origin
             provider.appendV1Suffix = false
+            // A stale access token gets exactly one renewal attempt; manual
+            // pasted tokens intentionally do not install this hook.
+            provider.oauthRefreshOnUnauthorized = {
+                _ = try await TraeAccountManager.shared.validAccessToken(
+                    instanceId: iid, expectedSite: expectedSite, forceRefresh: true)
+            }
         }
         provider.authHeaderName = "Authorization"
         provider.authHeaderPrefix = "Cloud-IDE-JWT "
-        let ids = TraeAccountManager.extraHeaderValues(instanceId: iid)
+        provider.absoluteEndpointOverride = TraeAPI.chatPath
+        let functions = TraeAPI.ModelFunctions()
         provider.extraHeaders.merge(TraeAPI.clientHeaders()) { _, new in new }
+        provider.extraHeaders["Accept"] = "text/event-stream"
         provider.extraAuthHeaders = { token in
+            let ids = TraeAccountManager.extraHeaderValues(instanceId: iid)
             var headers = TraeAPI.accountHeaders(
                 token: token,
                 userID: ids.userID,
                 machineID: ids.machineID,
                 deviceID: ids.deviceID
             )
-            // The per-request trace ids come from accountHeaders, so they are
-            // fresh for every call.
+            let identity = origin + ":" + TraeAPI.derivedMachineID(token)
+            if functions.needsDirectory(identity: identity) {
+                let directoryHeaders = TraeAPI.clientHeaders().merging(headers) { _, new in new }
+                let entries = await TraeAPI.roster(origin: origin, headers: directoryHeaders)
+                try Task.checkCancellation()
+                functions.store(entries, identity: identity)
+            }
             headers.removeValue(forKey: "Authorization")
             return headers
         }
         provider.bodyTransform = { body in
-            TraeAPI.mendedBody(body, model: model.id)
+            TraeAPI.mendedBody(body, model: model.id, function: functions.function(for: model.id))
         }
         provider.streamTranslator = TraeDialect()
         return provider

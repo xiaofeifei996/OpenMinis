@@ -1011,6 +1011,7 @@ struct AddProviderView: View {
         case .raccoon: return RaccoonOAuthFlow.llmBase
         case .autoClaw: return AutoClawAPI.defaultBase
         case .trae: return TraeAPI.Site.china.apiOrigin
+        case .traeInternational: return TraeAPI.Site.international.apiOrigin
         default: return "https://api.example.com"
         }
     }
@@ -1112,6 +1113,8 @@ struct AddProviderView: View {
                 // Browser sign-in: the sheet presents a Safari page and the
                 // loopback server in TraeSignIn answers it.
                 try await TraeAccountManager.shared.signIn(instanceId: pendingInstanceId)
+            case .traeInternational:
+                try await TraeAccountManager.shared.signIn(instanceId: pendingInstanceId, site: .international)
             case .workBuddyAI:
                 // Same plugin login, different platform query. The sheet and
                 // the account poll are identical, so only the region differs.
@@ -1251,7 +1254,7 @@ struct AddProviderView: View {
         case .autoClaw:
             token = ProviderKeychainHelper.loadOAuthString(
                 instanceId: pendingInstanceId, account: AutoClawKeychain.access)
-        case .trae:
+        case .trae, .traeInternational:
             token = ProviderKeychainHelper.loadOAuthString(
                 instanceId: pendingInstanceId, account: TraeKeychain.access)
         case .githubCopilot:
@@ -1362,6 +1365,7 @@ struct AddProviderView: View {
         case .raccoon: return "使用小浣熊账号登录"
         case .autoClaw: return "使用智谱账号登录"
         case .trae: return "使用 Trae 账号登录"
+        case .traeInternational: return "使用 Trae 国际版账号登录"
         case .unsupported: return AppLocalized("Sign In")
         }
     }
@@ -1382,7 +1386,7 @@ struct AddProviderView: View {
         case .workBuddyAI: return "WorkBuddy AI access token"
         case .raccoon: return "xiaohuanxiong.com access token"
         case .autoClaw: return "AutoClaw access token"
-        case .trae: return ""
+        case .trae, .traeInternational: return ""
         case .unsupported: return ""
         }
     }
@@ -1403,6 +1407,7 @@ struct AddProviderView: View {
         case .raccoon: return "小浣熊（商汤）"
         case .autoClaw: return "AutoClaw（智谱 AutoGLM）"
         case .trae: return "Trae（字节跳动）"
+        case .traeInternational: return "Trae 国际版"
         case .unsupported: return AppLocalized("Unsupported")
         }
     }
@@ -1445,7 +1450,7 @@ struct AddProviderView: View {
             // (the only path that works for the international host, whose
             // sign-in needs a captcha this app cannot render).
             return [.oauth]
-        case .trae:
+        case .trae, .traeInternational:
             // Browser sign-in, plus the same manual escape hatch.
             return [.oauth]
         case .openAIResponses, .gemini:
@@ -1471,8 +1476,12 @@ struct AddProviderView: View {
             return "粘贴 AutoClaw 客户端的 access token；国际版请同时填写 Base URL（https://autoglm-api.autoglm.ai）。"
         case (.trae, .oauth):
             return "使用 Trae 账号在应用内浏览器登录（自动识别国内版/国际版）。非官方接口，请遵守上游条款。"
+        case (.traeInternational, .oauth):
+            return "使用 Trae 国际版账号在应用内浏览器登录（国际版站点）。非官方接口，请遵守上游条款。"
         case (.trae, .apiKey):
             return "粘贴 Trae 客户端的 Cloud-IDE-JWT。"
+        case (.traeInternational, .apiKey):
+            return "粘贴 Trae 国际版客户端的 Cloud-IDE-JWT。"
         case (_, .apiKey):
             return AppLocalized("Use an API key from your \(type.displayName) account")
         case (.anthropic, .oauth):
@@ -1547,7 +1556,7 @@ struct AddProviderView: View {
         case .autoClaw:
             Image(systemName: "wand.and.stars")
                 .foregroundStyle(.teal)
-        case .trae:
+        case .trae, .traeInternational:
             Image(systemName: "chevron.left.forwardslash.chevron.right")
                 .foregroundStyle(.indigo)
         case .githubCopilot:
@@ -1574,7 +1583,7 @@ struct AddProviderView: View {
         case .workBuddyAI: return .teal
         case .raccoon: return .orange
         case .autoClaw: return .teal
-        case .trae: return .indigo
+        case .trae, .traeInternational: return .indigo
         case .unsupported: return .gray
         }
     }

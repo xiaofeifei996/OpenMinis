@@ -192,11 +192,11 @@ enum TraeAPI {
     /// The OpenAI body is kept for its messages, tools and reasoning effort;
     /// everything else is this wire's own. Every transform below exists because
     /// the upstream validator rejects the un-mended form.
-    static func mendedBody(_ root: [String: Any], model: String) -> [String: Any] {
+    static func mendedBody(_ root: [String: Any], model: String, function: String = defaultFunction) -> [String: Any] {
         var body: [String: Any] = [
             "app_id": appID,
             "app_version_code": versionCode,
-            "function": defaultFunction,
+            "function": function,
             "model": model,
             "config_name": model,
             "stream": true,
@@ -282,6 +282,7 @@ enum TraeAPI {
     struct Entry: Sendable, Hashable {
         var id: String
         var displayName: String
+        var function: String
         var reasoning: Bool
         var contextWindow: Int
         var maxTokens: Int
@@ -310,7 +311,7 @@ enum TraeAPI {
     }
 
     /// Every entry of one roster, minus the ones the IDE never shows a user.
-    static func entries(in document: [String: Any]) -> [Entry] {
+    static func entries(in document: [String: Any], function: String = defaultFunction) -> [Entry] {
         let list = document["config_info_list"] as? [[String: Any]] ?? []
         return list.compactMap { raw in
             guard let id = raw["config_name"] as? String, !id.isEmpty, !isHidden(id),
@@ -324,6 +325,7 @@ enum TraeAPI {
             return Entry(
                 id: id,
                 displayName: (display["display_name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? id,
+                function: function,
                 reasoning: (display["model_capability"] as? String) == "reasoning_model",
                 contextWindow: window > 0 ? window : 200_000,
                 maxTokens: maxTokens > 0 ? maxTokens : 64_000
@@ -348,8 +350,8 @@ enum TraeAPI {
     /// The live roster: every function asked at once, first listing of an id
     /// winning. A failure costs only its own models.
     static func roster(origin: String, headers: [String: String], session: URLSession = .shared) async -> [Entry] {
-        await withTaskGroup(of: [Entry].self) { group in
-            for function in directoryFunctions {
+        await withTaskGroup(of: (Int, [Entry]).self) { group in
+            for (index, function) in directoryFunctions.enumerated() {
                 guard let request = directoryRequest(origin: origin, function: function, headers: headers) else {
                     continue
                 }
@@ -357,17 +359,44 @@ enum TraeAPI {
                     guard let (data, response) = try? await session.data(for: request),
                           (response as? HTTPURLResponse)?.statusCode == 200,
                           let document = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-                        return []
+                        return (index, [])
                     }
-                    return entries(in: document)
+                    return (index, entries(in: document, function: function))
                 }
             }
+            var listings: [Int: [Entry]] = [:]
+            for await (index, listed) in group { listings[index] = listed }
             var seen = Set<String>()
             var out: [Entry] = []
-            for await listed in group {
-                for entry in listed where seen.insert(entry.id).inserted { out.append(entry) }
+            // Preserve the declared priority, independent of network completion order.
+            for index in directoryFunctions.indices {
+                for entry in listings[index] ?? [] where seen.insert(entry.id).inserted { out.append(entry) }
             }
             return out
+        }
+    }
+
+    /// Request-local provider cache. The identity includes the origin and token
+    /// digest, so another account or endpoint cannot reuse a model's route.
+    final class ModelFunctions: @unchecked Sendable {
+        private let lock = NSLock()
+        private var identity = ""
+        private var functions: [String: String] = [:]
+
+        func needsDirectory(identity: String) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            return self.identity != identity || functions.isEmpty
+        }
+
+        func store(_ entries: [Entry], identity: String) {
+            lock.lock(); defer { lock.unlock() }
+            self.identity = identity
+            functions = Dictionary(entries.map { ($0.id, $0.function) }, uniquingKeysWith: { first, _ in first })
+        }
+
+        func function(for model: String) -> String {
+            lock.lock(); defer { lock.unlock() }
+            return functions[model] ?? TraeAPI.defaultFunction
         }
     }
 

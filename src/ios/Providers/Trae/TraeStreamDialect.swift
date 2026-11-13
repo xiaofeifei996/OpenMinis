@@ -11,9 +11,8 @@ import Foundation
 /// Frame names and their meanings come from Apelin's `TraeWire` (PR #40), where
 /// this wire was first mapped from client captures.
 protocol TraeStreamTranslator: Sendable {
-    /// Rewrite one `data:` payload into zero or more OpenAI chunk payloads.
-    /// `event` is the SSE `event:` field (empty when the stream carries none).
-    func translate(event: String, payload: String) -> [String]
+    // Marker only. Mutable frame/tool state belongs to one request, never to
+    // the provider instance (which can serve concurrent requests).
 }
 
 /// The concrete Trae dialect.
@@ -121,5 +120,156 @@ struct TraeDialect: TraeStreamTranslator {
             return "{}"
         }
         return text
+    }
+}
+
+/// Per-request normalizer shared by text completions and the agent transport.
+/// A finish reason closes the turn, not the transport: usage may follow it.
+struct TraeStreamState {
+    private(set) var streamEnded = false
+    private(set) var finishSeen = false
+    private var event = ""
+    private var data: [String] = []
+    private var answered = false
+    private var calledTools = false
+    private var doneEmitted = false
+    private var tools = TraeToolState()
+
+    mutating func consume(_ line: String) throws -> [String] {
+        guard !streamEnded else { return [] }
+        if line.hasPrefix("event:") {
+            let flushed = try flush()
+            event = line.dropFirst(6).trimmingCharacters(in: .whitespaces)
+            return flushed
+        }
+        if line.hasPrefix("data:") {
+            data.append(line.dropFirst(5).trimmingCharacters(in: .whitespaces))
+            // AsyncBytes.lines can omit blank lines. Flush complete JSON eagerly,
+            // retaining fragments for multiline SSE until a document is complete.
+            let joined = data.joined(separator: "\n")
+            if joined == "[DONE]" || (try? JSONSerialization.jsonObject(with: Data(joined.utf8))) != nil {
+                return try flush()
+            }
+        }
+        if line.isEmpty { return try flush() }
+        return []
+    }
+
+    private mutating func flush() throws -> [String] {
+        guard !data.isEmpty else { return [] }
+        let payload = data.joined(separator: "\n")
+        let frameEvent = event
+        data.removeAll(keepingCapacity: true)
+        event = "" // An event name belongs to exactly one frame.
+        if payload == "[DONE]" {
+            var out = finishTurn(reason: calledTools ? "tool_calls" : "stop")
+            streamEnded = true
+            if !doneEmitted { out.append("data: [DONE]"); doneEmitted = true }
+            return out
+        }
+        guard var json = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any] else {
+            throw LLMError.providerError(message: "Trae returned a malformed stream frame.")
+        }
+        // Refusals can arrive with HTTP 200. Never expose the vendor's raw
+        // error body: it can contain account credentials.
+        if frameEvent == "error" || json["error"] != nil
+            || ((json["statusCodeValue"] as? Int).map { $0 != 200 } ?? false) {
+            throw LLMError.providerError(message: "Trae refused the streaming request. Check the account and model.")
+        }
+        if let calls = json["tool_calls"] as? [[String: Any]], !calls.isEmpty {
+            calledTools = true
+            json["tool_calls"] = tools.normalize(calls)
+        }
+        if frameEvent == "done" {
+            let reason = TraeDialect.finishReason(json["finish_reason"] as? String)
+            return finishTurn(reason: calledTools && reason == "stop" ? "tool_calls" : reason)
+        }
+        let encoded = try JSONSerialization.data(withJSONObject: json)
+        let chunks = TraeDialect.translate(event: frameEvent, payload: String(decoding: encoded, as: UTF8.self))
+        if frameEvent.isEmpty || frameEvent == "message" || frameEvent == "output" {
+            answered = answered || !chunks.isEmpty
+        }
+        return chunks.map { "data: " + $0 }
+    }
+
+    private mutating func finishTurn(reason: String) -> [String] {
+        guard !finishSeen else { return [] }
+        finishSeen = true
+        let frame: [String: Any] = ["choices": [[
+            "index": 0, "delta": [String: Any](), "finish_reason": reason,
+        ]]]
+        let encoded = try! JSONSerialization.data(withJSONObject: frame, options: [.sortedKeys])
+        return ["data: " + String(decoding: encoded, as: UTF8.self)]
+    }
+
+    mutating func finish() throws -> [String] {
+        var out = try flush()
+        if !finishSeen {
+            guard answered || calledTools else {
+                throw LLMError.providerError(message: "Trae ended without an answer.")
+            }
+            out += finishTurn(reason: calledTools ? "tool_calls" : "length")
+        }
+        streamEnded = true
+        if !doneEmitted { out.append("data: [DONE]"); doneEmitted = true }
+        return out
+    }
+}
+
+/// Stable indices and exactly one id/name start for the existing agent parser.
+/// Metadata can repeat or arrive after argument fragments.
+private struct TraeToolState {
+    private struct Call {
+        var id = ""
+        var name = ""
+        var pendingArguments = ""
+        var started = false
+    }
+    private var calls: [Int: Call] = [:]
+    private var indicesByID: [String: Int] = [:]
+    private var lastIndex: Int?
+
+    mutating func normalize(_ incoming: [[String: Any]]) -> [[String: Any]] {
+        var result: [[String: Any]] = []
+        for (position, raw) in incoming.enumerated() {
+            let function = (raw["function_call"] ?? raw["function"]) as? [String: Any] ?? [:]
+            let id = raw["id"] as? String ?? ""
+            let name = function["name"] as? String ?? ""
+            let index: Int
+            if let explicit = (raw["index"] as? NSNumber)?.intValue { index = explicit }
+            else if !id.isEmpty, let known = indicesByID[id] { index = known }
+            else if !id.isEmpty { index = (calls.keys.max() ?? -1) + 1 }
+            else if incoming.count > 1 { index = position }
+            else if !name.isEmpty, let known = calls.first(where: { $0.value.name == name })?.key { index = known }
+            else { index = lastIndex ?? 0 }
+            var call = calls[index] ?? Call()
+            if !id.isEmpty { indicesByID[id] = index; if !call.started { call.id = id } }
+            if !name.isEmpty && !call.started { call.name = name }
+            if let arguments = function["arguments"] as? String {
+                call.pendingArguments += arguments
+            } else if let arguments = function["arguments"], !(arguments is NSNull),
+                      JSONSerialization.isValidJSONObject(arguments),
+                      let data = try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys]) {
+                call.pendingArguments += String(decoding: data, as: UTF8.self)
+            }
+            if !call.name.isEmpty {
+                var fields: [String: Any] = [:]
+                var entry: [String: Any] = ["index": index, "type": "function"]
+                if !call.started {
+                    if call.id.isEmpty { call.id = "call_" + UUID().uuidString.replacingOccurrences(of: "-", with: "") }
+                    entry["id"] = call.id
+                    fields["name"] = call.name
+                    call.started = true
+                }
+                if !call.pendingArguments.isEmpty {
+                    fields["arguments"] = call.pendingArguments
+                    call.pendingArguments = ""
+                }
+                if !fields.isEmpty { entry["function"] = fields; result.append(entry) }
+            }
+            calls[index] = call
+            lastIndex = index
+        }
+        return result
     }
 }

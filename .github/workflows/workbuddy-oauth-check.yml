@@ -46,6 +46,10 @@ jobs:
             src/ios/Providers/AutoClaw/AutoClawAPI.swift \
             src/ios/Providers/AutoClaw/AutoClawAccountManager.swift \
             src/ios/Views/Providers/AutoClawLoginSheet.swift \
+            src/ios/Providers/Trae/TraeAPI.swift \
+            src/ios/Providers/Trae/TraeSignIn.swift \
+            src/ios/Providers/Trae/TraeAccountManager.swift \
+            src/ios/Providers/Trae/TraeStreamDialect.swift \
             src/ios/Providers/LLMProviderFactory.swift \
             src/ios/Views/Providers/AddProviderView.swift \
             src/ios/Providers/ProviderTypes.swift
@@ -53,6 +57,19 @@ jobs:
             echo "Parsing $file"
             swiftc -frontend -parse "$file"
           done
+
+      - name: Run Trae protocol regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/trae-international-tests
+          swiftc -O \
+            -o build/trae-international-tests/trae-tests \
+            src/ios/Providers/Trae/TraeAPI.swift \
+            src/ios/Providers/Trae/TraeStreamDialect.swift \
+            scripts/trae-international-tests/Support.swift \
+            scripts/trae-international-tests/main.swift
+          ./build/trae-international-tests/trae-tests
 
       - name: Validate Xcode project prerequisites
         shell: bash

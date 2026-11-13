@@ -310,7 +310,7 @@ private let logger = AppLogger(category: "ModelUseOffload")
         case .unsupported:
             return ""
         case .openAI, .openAIResponses, .openRouter, .xAI, .kimiCode, .githubCopilot,
-             .workBuddyChina, .workBuddyAI, .raccoon, .autoClaw, .trae:
+             .workBuddyChina, .workBuddyAI, .raccoon, .autoClaw, .trae, .traeInternational:
             return """
             Hint — \(entry.model.displayName) is an OpenAI-compatible image model. Use the same \
             messages format as text models: put the prompt in the user message and image params \

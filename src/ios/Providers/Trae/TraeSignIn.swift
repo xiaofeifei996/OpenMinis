@@ -106,14 +106,22 @@ enum TraeSignIn {
             site: site
         )
 
+        try Task.checkCancellation()
         try presentInSafari(page)
+        // Defer dismissal until the flow has consumed the callback and exchange.
+        // Safari can finish immediately after following the loopback redirect.
+        defer { Task { @MainActor in dismissSignInPage() } }
         let callback = try await server.waitForCallback(timeout: 5 * 60)
-        dismissSignInPage()
+        try Task.checkCancellation()
 
         if let error = callback.query["error"], !error.isEmpty {
             throw FlowError.server("Trae 登录失败：\(error)")
         }
         let payload = try callbackPayload(callback.query)
+        guard payload.loginTraceID.isEmpty || payload.loginTraceID == loginTraceID else {
+            throw FlowError.server("Trae 登录回调属于另一次登录，请重试。")
+        }
+        try Task.checkCancellation()
         let exchanged = try await exchange(
             authCode: payload.authCode,
             codeVerifier: pkce.verifier,
@@ -261,6 +269,7 @@ enum TraeSignIn {
     private struct Callback {
         var authCode: String
         var userID: String
+        var loginTraceID: String
     }
 
     /// The page is dual-mode: with a `code_challenge` it returns `authCodeInfo`
@@ -274,7 +283,7 @@ enum TraeSignIn {
               let authCode = TraeAPI.firstString(object, ["AuthCode", "authCode"]),
               !authCode.isEmpty else {
             if let code = query["code"], !code.isEmpty {
-                return Callback(authCode: code, userID: "")
+                return Callback(authCode: code, userID: "", loginTraceID: query["loginTraceID"] ?? "")
             }
             throw FlowError.noAuthCode
         }
@@ -284,7 +293,11 @@ enum TraeSignIn {
            let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
             userID = TraeAPI.firstString(object, ["UserID", "UserId", "userId"]) ?? ""
         }
-        return Callback(authCode: authCode, userID: userID)
+        return Callback(
+            authCode: authCode,
+            userID: userID,
+            loginTraceID: query["loginTraceID"] ?? ""
+        )
     }
 
     // MARK: - Exchange
@@ -476,10 +489,25 @@ enum TraeSignIn {
         return TraeAPI.firstString(object, ["user_id", "userId", "uid", "sub", "UserID"]) ?? ""
     }
 
-    /// `TokenExpireAt` is Unix seconds or milliseconds; absent means unknown.
-    private static func expiry(_ raw: Any?) -> Double? {
-        guard let number = raw as? NSNumber, number.doubleValue > 0 else { return nil }
-        let value = number.doubleValue
+    /// `TokenExpireAt` may be Unix seconds/milliseconds, a numeric string, or
+    /// an ISO-8601 date. Absent or malformed means unknown, which remains usable
+    /// until an explicit forced refresh.
+    static func expiry(_ raw: Any?) -> Double? {
+        let value: Double?
+        switch raw {
+        case let number as NSNumber: value = number.doubleValue
+        case let string as String:
+            if let number = Double(string.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                value = number
+            } else if let date = ISO8601DateFormatter().date(from: string) {
+                value = date.timeIntervalSince1970
+            } else {
+                value = nil
+            }
+        case let date as Date: value = date.timeIntervalSince1970
+        default: value = nil
+        }
+        guard let value, value > 0 else { return nil }
         return value > 1_000_000_000_000 ? value / 1000 : value
     }
 }

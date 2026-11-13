@@ -150,7 +150,7 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
         // the API rejects requests that do not look like the editor plugin — so
         // it must not be user-overridable the way a proxy's UA is.
         case .gemini, .antigravity, .githubCopilot, .workBuddyChina, .workBuddyAI, .raccoon, .autoClaw,
-             .trae, .unsupported:
+             .trae, .traeInternational, .unsupported:
             return false
         }
     }
@@ -188,7 +188,7 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
         case .openAI, .openAIResponses, .openRouter, .xAI, .kimiCode, .githubCopilot:
             return OpenCodeChannel.looksLikeOpenCodeBaseURL(effectiveCustomBaseURL)
         case .anthropic, .gemini, .antigravity, .workBuddyChina, .workBuddyAI, .raccoon, .autoClaw,
-             .trae, .unsupported:
+             .trae, .traeInternational, .unsupported:
             return false
         }
     }
@@ -241,7 +241,7 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
     /// affected by `imageEndpointMode`.
     var supportsImageEndpointSetting: Bool {
         switch providerType {
-        case .openAI, .openAIResponses, .openRouter, .xAI, .kimiCode, .raccoon, .autoClaw, .trae:
+        case .openAI, .openAIResponses, .openRouter, .xAI, .kimiCode, .raccoon, .autoClaw, .trae, .traeInternational:
             return true
         default:
             return false
@@ -367,7 +367,7 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
             return ProviderKeychainHelper.loadOAuthString(
                 instanceId: id, account: AutoClawKeychain.access, caller: "hasAnyCredential"
             )?.isEmpty == false
-        case .trae:
+        case .trae, .traeInternational:
             return ProviderKeychainHelper.loadOAuthString(
                 instanceId: id, account: TraeKeychain.access, caller: "hasAnyCredential"
             )?.isEmpty == false

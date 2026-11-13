@@ -182,15 +182,16 @@ final class OpenAIProvider: LLMProvider {
     /// `X-Cloudide-Token`) and refuses the request when any is missing. Doing
     /// it here rather than in `perRequestHeaders` keeps the credential out of a
     /// closure that never receives it.
-    var extraAuthHeaders: (@Sendable (String) -> [String: String])?
+    /// Awaited before bodyTransform, so account roster preparation completes
+    /// before the request chooses its model function. The token is fetched once.
+    var extraAuthHeaders: (@Sendable (String) async throws -> [String: String])?
 
-    /// Rewrites a non-OpenAI SSE dialect into OpenAI chunk payloads.
-    ///
-    /// nil means the upstream already speaks Chat Completions, which is every
-    /// provider except Trae: it answers `event: output/token_usage/error/done`
-    /// frames with no `choices` at all. The provider stays ignorant of who it
-    /// is talking to — it hands each frame over and parses what comes back
-    /// through the one path it already has.
+    /// Optional provider-specific refresh, invoked once after a streaming 401
+    /// and before any response content is consumed. Nil means no retry.
+    var oauthRefreshOnUnauthorized: (@Sendable () async throws -> Void)?
+
+    /// Trae dialect marker. Both stream entry points allocate their own mutable
+    /// TraeStreamState; concurrent requests never share tool or finish state.
     var streamTranslator: (any TraeStreamTranslator)?
 
     /// Last chance to rewrite a Chat Completions body before it is serialized.
@@ -679,7 +680,8 @@ final class OpenAIProvider: LLMProvider {
         // exact prose stream the same as a streamMessage caller would
         // see.
         let isCodexOAuthBackend = !useChat && !forceResponsesAPI && isOAuth && customBaseURL == nil
-        if isCodexOAuthBackend {
+        // Trae's llm_utils_chat also requires stream=true for every call.
+        if isCodexOAuthBackend || streamTranslator != nil {
             return try await sendMessageViaStream(
                 messages: messages,
                 systemPrompt: systemPrompt,
@@ -751,6 +753,18 @@ final class OpenAIProvider: LLMProvider {
         maxTokens: Int,
         temperature: Double?
     ) async throws -> AsyncThrowingStream<LLMStreamChunk, Error> {
+        try await streamMessage(messages: messages, systemPrompt: systemPrompt,
+                                maxTokens: maxTokens, temperature: temperature,
+                                retryUnauthorized: true)
+    }
+
+    private func streamMessage(
+        messages: [LLMMessage],
+        systemPrompt: String?,
+        maxTokens: Int,
+        temperature: Double?,
+        retryUnauthorized: Bool
+    ) async throws -> AsyncThrowingStream<LLMStreamChunk, Error> {
         let useChat = usesChatCompletionsAPI
         let serialized = messages.map { useChat ? Self.openAIMessageDict($0) : Self.responsesAPIMessageDict($0) }
         let request = try await buildRequest(
@@ -775,6 +789,13 @@ final class OpenAIProvider: LLMProvider {
         }
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
 
+        if statusCode == 401, retryUnauthorized, let refresh = oauthRefreshOnUnauthorized {
+            session.finishTasksAndInvalidate()
+            try await refresh()
+            return try await streamMessage(messages: messages, systemPrompt: systemPrompt,
+                                           maxTokens: maxTokens, temperature: temperature,
+                                           retryUnauthorized: false)
+        }
         if !(200..<300).contains(statusCode) {
             var body = ""
             for try await line in byteStream.lines { body += line }
@@ -786,17 +807,9 @@ final class OpenAIProvider: LLMProvider {
             let task = Task {
                 do {
                     continuation.yield(.started)
-                    var sseEvent = ""
-                    for try await line in byteStream.lines {
-                        // A dialect that names its frames in `event:` needs that
-                        // name carried across to the next `data:` line — Trae
-                        // puts the discriminator there, not in the payload.
-                        if line.hasPrefix("event:") {
-                            let after = line.dropFirst(6)
-                            sseEvent = (after.first == " " ? String(after.dropFirst()) : String(after))
-                                .trimmingCharacters(in: .whitespaces)
-                            continue
-                        }
+                    let isTrae = self.streamTranslator != nil
+                    let lines = self.responseLines(byteStream, session: session, translateTrae: isTrae)
+                    for try await line in lines {
                         // Tolerate `data:` with or without the optional space
                         // — see OpenAIAgentProvider.ssePayload for context
                         // (China Telecom's deepseek-v4-oc endpoint omits it).
@@ -804,21 +817,12 @@ final class OpenAIProvider: LLMProvider {
                         let after = line.dropFirst(5)
                         let payload = after.first == " " ? String(after.dropFirst()) : String(after)
                         if payload == "[DONE]" {
-                            continuation.yield(.finished(stopReason: nil))
+                            // Trae's state already emitted its one finish reason.
+                            if !isTrae { continuation.yield(.finished(stopReason: nil)) }
                             break
                         }
 
-                        // A translator turns the frame into standard OpenAI
-                        // chunks (zero or more) and the code below consumes the
-                        // result unchanged, so there is one parse path for every
-                        // provider.
-                        var payloads = [payload]
-                        if let translator = self.streamTranslator {
-                            payloads = translator.translate(event: sseEvent, payload: payload)
-                            sseEvent = ""
-                        }
-
-                        for one in payloads {
+                        for one in [payload] {
                             guard let eventData = one.data(using: .utf8),
                                   let event = try? JSONSerialization.jsonObject(with: eventData) as? [String: Any] else { continue }
 
@@ -839,6 +843,11 @@ final class OpenAIProvider: LLMProvider {
                                 }
                                 if let usage = event["usage"] as? [String: Any] {
                                     continuation.yield(.usage(self.parseChatCompletionsUsage(usage)))
+                                }
+                                if isTrae,
+                                   let choices = event["choices"] as? [[String: Any]],
+                                   let reason = choices.first?["finish_reason"] as? String {
+                                    continuation.yield(.finished(stopReason: reason))
                                 }
                             } else {
                                 if let text = self.parseResponsesAPITextDelta(event) {
@@ -1021,15 +1030,24 @@ final class OpenAIProvider: LLMProvider {
         body: [String: Any],
         isResponsesAPI: Bool
     ) async throws -> (AsyncThrowingStream<String, Error>, Int) {
+        try await streamRaw(body: body, isResponsesAPI: isResponsesAPI, retryUnauthorized: true)
+    }
+
+    private func streamRaw(
+        body: [String: Any],
+        isResponsesAPI: Bool,
+        retryUnauthorized: Bool
+    ) async throws -> (AsyncThrowingStream<String, Error>, Int) {
         let url: URL
         var request: URLRequest
 
         let isCodexOAuth = isResponsesAPI && !forceResponsesAPI && isOAuth && customBaseURL == nil
+        let token: String
 
         if isResponsesAPI && isCodexOAuth {
             url = URL(string: "https://chatgpt.com/backend-api/codex/responses")!
             request = URLRequest(url: url)
-            let token = try await getToken()
+            token = try await getToken()
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             request.setValue(Self.codexClientVersion, forHTTPHeaderField: "Version")
             request.setValue("responses=experimental", forHTTPHeaderField: "Openai-Beta")
@@ -1063,36 +1081,30 @@ final class OpenAIProvider: LLMProvider {
             if isAzure, let azure = azureURL(path: "/responses") {
                 url = azure
             } else {
-                let base = resolvedAPIBase(customBaseURL ?? "https://api.openai.com", appendV1: appendV1Suffix)
-                let v1Path = appendV1Suffix ? "/v1" : ""
-                url = try requireURL(URLBuilding.join(base, v1Path, "/responses"))
+                url = try requireEndpointURL(defaultPath: "/responses")
             }
             request = URLRequest(url: url)
-            let token = try await getToken()
+            token = try await getToken()
             applyKeyAuth(&request, token: token)
         } else {
             // [T-ios-azure-openai] Azure chat-completions variant.
             if isAzure, let azure = azureURL(path: "/chat/completions") {
                 url = azure
             } else {
-                let base = resolvedAPIBase(customBaseURL ?? "https://api.openai.com", appendV1: appendV1Suffix)
-                let v1Path = appendV1Suffix ? "/v1" : ""
-                url = try requireURL(URLBuilding.join(base, v1Path, "/chat/completions"))
+                url = try requireEndpointURL(defaultPath: "/chat/completions")
             }
             request = URLRequest(url: url)
-            let token = try await getToken()
+            token = try await getToken()
             applyKeyAuth(&request, token: token)
         }
 
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        // The token each branch resolved is needed again below (Trae repeats
-        // it in two extra headers), so resolve once here instead of per branch.
-        let resolvedToken = try await getToken()
+        // Reuse the branch's token for every credential header.
         for (key, value) in extraHeaders {
             request.setValue(value, forHTTPHeaderField: key)
         }
-        for (key, value) in extraAuthHeaders?(resolvedToken) ?? [:] {
+        for (key, value) in try await extraAuthHeaders?(token) ?? [:] {
             request.setValue(value, forHTTPHeaderField: key)
         }
         // [T-copilot-per-request-headers] The agent loop's own request path —
@@ -1133,7 +1145,7 @@ final class OpenAIProvider: LLMProvider {
             }
         }
         let maskedHeaders: [String: String] = (request.allHTTPHeaderFields ?? [:]).reduce(into: [:]) { acc, pair in
-            acc[pair.key] = pair.key == "Authorization" ? "Bearer ***" : pair.value
+            acc[pair.key] = debugHeaderValue(pair.value, for: pair.key)
         }
         LastAPIRequestBody.shared.setRequestMeta(
             url: url.absoluteString,
@@ -1171,6 +1183,12 @@ final class OpenAIProvider: LLMProvider {
             QuotaObservationSink.recordCodexResponse(instanceId: quotaInstanceId, response: http)
         }
 
+        if statusCode == 401, retryUnauthorized, let refresh = oauthRefreshOnUnauthorized {
+            session.finishTasksAndInvalidate()
+            try await refresh()
+            return try await streamRaw(body: body, isResponsesAPI: isResponsesAPI,
+                                       retryUnauthorized: false)
+        }
         if !(200..<300).contains(statusCode) {
             var body = ""
             for try await line in byteStream.lines { body += line }
@@ -1178,28 +1196,44 @@ final class OpenAIProvider: LLMProvider {
             throw mapHTTPError(statusCode: statusCode, body: body)
         }
 
-        let lineStream = AsyncThrowingStream<String, Error> { continuation in
+        let lineStream = responseLines(byteStream, session: session,
+                                       translateTrae: streamTranslator != nil && !isResponsesAPI)
+        return (lineStream, statusCode)
+    }
+
+    /// Both consumers read the same normalized lines. State is created inside
+    /// the request's pump, never retained by the reusable provider/dialect.
+    private func responseLines(
+        _ bytes: URLSession.AsyncBytes,
+        session: URLSession,
+        translateTrae: Bool
+    ) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    for try await line in byteStream.lines {
-                        continuation.yield(line)
+                    var state = TraeStreamState()
+                    for try await line in bytes.lines {
+                        try Task.checkCancellation()
+                        if translateTrae {
+                            for normalized in try state.consume(line) { continuation.yield(normalized) }
+                            if state.streamEnded { break }
+                        } else {
+                            continuation.yield(line)
+                        }
+                    }
+                    if translateTrae {
+                        for normalized in try state.finish() { continuation.yield(normalized) }
                     }
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
                 }
             }
-            // [T-ios-stream-connection-reuse] Cancel the pump AND tear down
-            // this stream's session. Fires on normal finish, thrown error, and
-            // consumer cancellation alike, so the connection is never returned
-            // to a pool that could hand it to a later request.
             continuation.onTermination = { _ in
                 task.cancel()
                 session.finishTasksAndInvalidate()
             }
         }
-
-        return (lineStream, statusCode)
     }
 
     // MARK: - Request Building
@@ -1264,7 +1298,7 @@ final class OpenAIProvider: LLMProvider {
         for (key, value) in extraHeaders {
             request.setValue(value, forHTTPHeaderField: key)
         }
-        for (key, value) in extraAuthHeaders?(token) ?? [:] {
+        for (key, value) in try await extraAuthHeaders?(token) ?? [:] {
             request.setValue(value, forHTTPHeaderField: key)
         }
         // [T-copilot-per-request-headers] This builder takes `messages` rather
@@ -1336,7 +1370,7 @@ final class OpenAIProvider: LLMProvider {
             LastAPIRequestBody.shared.set(bodyStr, provider: "OpenAI")
         }
         let maskedHeaders: [String: String] = (request.allHTTPHeaderFields ?? [:]).reduce(into: [:]) { acc, pair in
-            acc[pair.key] = pair.key == "Authorization" ? "Bearer ***" : pair.value
+            acc[pair.key] = debugHeaderValue(pair.value, for: pair.key)
         }
         LastAPIRequestBody.shared.setRequestMeta(
             url: url.absoluteString,
@@ -1390,7 +1424,7 @@ final class OpenAIProvider: LLMProvider {
         for (key, value) in extraHeaders {
             request.setValue(value, forHTTPHeaderField: key)
         }
-        for (key, value) in extraAuthHeaders?(token) ?? [:] {
+        for (key, value) in try await extraAuthHeaders?(token) ?? [:] {
             request.setValue(value, forHTTPHeaderField: key)
         }
         // [T-copilot-per-request-headers] Responses-API shape: the message list
@@ -1480,6 +1514,15 @@ final class OpenAIProvider: LLMProvider {
     // MARK: - Debug Logging
 
     #if DEBUG
+    private func debugHeaderValue(_ value: String, for key: String) -> String {
+        let name = key.lowercased()
+        if name == authHeaderName.lowercased()
+            || ["authorization", "api-key", "x-authorization", "x-ide-token", "x-cloudide-token"].contains(name) {
+            return "***"
+        }
+        return value
+    }
+
     private func logOutgoingRequest(url: URL, headers: [String: String]?, body: [String: Any]) {
         var parts: [String] = []
         parts.append("📤 OpenAI Request")
@@ -1502,7 +1545,7 @@ final class OpenAIProvider: LLMProvider {
         // Headers (mask Authorization)
         if let headers {
             for (key, val) in headers.sorted(by: { $0.key < $1.key }) {
-                let display = key == "Authorization" ? "Bearer ***" : val
+                let display = debugHeaderValue(val, for: key)
                 parts.append("  header: \(key): \(display)")
             }
         }
@@ -1830,7 +1873,7 @@ final class OpenAIProvider: LLMProvider {
                 LastAPIRequestBody.shared.set(s, provider: "OpenAI")
             }
             let masked: [String: String] = (request.allHTTPHeaderFields ?? [:]).reduce(into: [:]) { acc, p in
-                acc[p.key] = p.key.lowercased() == "authorization" ? "Bearer ***" : p.value
+                acc[p.key] = debugHeaderValue(p.value, for: p.key)
             }
             LastAPIRequestBody.shared.setRequestMeta(url: url.absoluteString, method: method, headers: masked)
         }
@@ -1888,7 +1931,7 @@ final class OpenAIProvider: LLMProvider {
         for (key, value) in extraHeaders {
             request.setValue(value, forHTTPHeaderField: key)
         }
-        for (key, value) in extraAuthHeaders?(token) ?? [:] {
+        for (key, value) in try await extraAuthHeaders?(token) ?? [:] {
             request.setValue(value, forHTTPHeaderField: key)
         }
         // [T-opencode-every-entry] Per-request headers (OpenCode session,
@@ -1940,7 +1983,7 @@ final class OpenAIProvider: LLMProvider {
                 LastAPIRequestBody.shared.set(bodyStr, provider: "OpenAI")
             }
             let maskedHeaders: [String: String] = (request.allHTTPHeaderFields ?? [:]).reduce(into: [:]) { acc, pair in
-                acc[pair.key] = pair.key == "Authorization" ? "Bearer ***" : pair.value
+                acc[pair.key] = debugHeaderValue(pair.value, for: pair.key)
             }
             LastAPIRequestBody.shared.setRequestMeta(
                 url: url.absoluteString,
@@ -2088,7 +2131,7 @@ final class OpenAIProvider: LLMProvider {
         for (key, value) in extraHeaders {
             request.setValue(value, forHTTPHeaderField: key)
         }
-        for (key, value) in extraAuthHeaders?(token) ?? [:] {
+        for (key, value) in try await extraAuthHeaders?(token) ?? [:] {
             request.setValue(value, forHTTPHeaderField: key)
         }
         // [T-opencode-every-entry] Per-request headers (OpenCode session,
@@ -2149,7 +2192,7 @@ final class OpenAIProvider: LLMProvider {
             LastAPIRequestBody.shared.set(summaryStr, provider: "OpenAI")
         }
         let editHeaders: [String: String] = (request.allHTTPHeaderFields ?? [:]).reduce(into: [:]) { acc, pair in
-            acc[pair.key] = pair.key == "Authorization" ? "Bearer ***" : pair.value
+            acc[pair.key] = debugHeaderValue(pair.value, for: pair.key)
         }
         LastAPIRequestBody.shared.setRequestMeta(
             url: url.absoluteString,

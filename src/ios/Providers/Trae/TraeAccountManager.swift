@@ -33,7 +33,31 @@ final class TraeAccountManager {
 
     private let logger = AppLogger(category: "Trae")
     private let refreshBuffer: TimeInterval = 5 * 60
-    private var inFlight: [String: Task<String, Error>] = [:]
+    private struct RefreshFlight {
+        let id: UUID
+        let identity: [String?]
+        let task: Task<String, Error>
+    }
+    private var inFlight: [String: RefreshFlight] = [:]
+    private var signIns: [String: (id: UUID, task: Task<TraeSignIn.Credentials, Error>)] = [:]
+
+    // Keep the existing per-field Keychain format. Include every identity field
+    // so an imported credential or a new login wins over an older renewal.
+    private static let accounts = [
+        TraeKeychain.access, TraeKeychain.refresh, TraeKeychain.expiry,
+        TraeKeychain.userID, TraeKeychain.machineID, TraeKeychain.deviceID,
+        TraeKeychain.gate, TraeKeychain.site, TraeKeychain.apiOrigin,
+    ]
+
+    private func identity(instanceId: String) -> [String?] {
+        Self.accounts.map {
+            ProviderKeychainHelper.loadOAuthString(instanceId: instanceId, account: $0)
+        }
+    }
+
+    private func cancelRefresh(instanceId: String) {
+        inFlight.removeValue(forKey: instanceId)?.task.cancel()
+    }
 
     enum ManagerError: LocalizedError {
         case notSignedIn
@@ -65,12 +89,17 @@ final class TraeAccountManager {
         ProviderKeychainHelper.loadOAuthString(instanceId: instanceId, account: TraeKeychain.apiOrigin)
     }
 
+    nonisolated static func resolvedOrigin(instance: ProviderInstance) -> String {
+        if let custom = instance.effectiveCustomBaseURL { return custom }
+        if instance.providerType == .traeInternational { return TraeAPI.Site.international.apiOrigin }
+        if let saved = apiOrigin(instanceId: instance.id), !saved.isEmpty { return saved }
+        return TraeAPI.Site.china.apiOrigin
+    }
+
     func logout(instanceId: String) {
-        inFlight[instanceId]?.cancel()
-        inFlight[instanceId] = nil
-        for account in [TraeKeychain.access, TraeKeychain.refresh, TraeKeychain.expiry,
-                        TraeKeychain.userID, TraeKeychain.machineID, TraeKeychain.deviceID,
-                        TraeKeychain.gate, TraeKeychain.site, TraeKeychain.apiOrigin] {
+        cancelRefresh(instanceId: instanceId)
+        signIns.removeValue(forKey: instanceId)?.task.cancel()
+        for account in Self.accounts {
             ProviderKeychainHelper.deleteOAuthString(instanceId: instanceId, account: account)
         }
         logger.info("logout instanceId=\(instanceId.prefix(8))")
@@ -79,13 +108,35 @@ final class TraeAccountManager {
     // MARK: - Sign-in
 
     @discardableResult
-    func signIn(instanceId: String) async throws -> String {
-        let credentials = try await TraeSignIn.signIn()
+    func signIn(instanceId: String, site: TraeAPI.Site? = nil) async throws -> String {
+        try Task.checkCancellation()
+        cancelRefresh(instanceId: instanceId)
+        signIns.removeValue(forKey: instanceId)?.task.cancel()
+        let loginID = UUID()
+        let task = Task { @MainActor in
+            if let site { return try await TraeSignIn.signIn(site: site) }
+            return try await TraeSignIn.signIn()
+        }
+        signIns[instanceId] = (loginID, task)
+        defer {
+            if signIns[instanceId]?.id == loginID { signIns[instanceId] = nil }
+        }
+        let credentials = try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        try Task.checkCancellation()
+        guard signIns[instanceId]?.id == loginID else { throw CancellationError() }
+        // A request may have started another renewal while the page was open.
+        cancelRefresh(instanceId: instanceId)
         ProviderKeychainHelper.saveOAuthString(
             credentials.accessToken, instanceId: instanceId, account: TraeKeychain.access)
         if !credentials.refreshToken.isEmpty {
             ProviderKeychainHelper.saveOAuthString(
                 credentials.refreshToken, instanceId: instanceId, account: TraeKeychain.refresh)
+        } else {
+            ProviderKeychainHelper.deleteOAuthString(instanceId: instanceId, account: TraeKeychain.refresh)
         }
         if let expiresAt = credentials.expiresAt {
             ProviderKeychainHelper.saveOAuthString(
@@ -100,8 +151,12 @@ final class TraeAccountManager {
             (credentials.gate, TraeKeychain.gate),
             (credentials.site.rawValue, TraeKeychain.site),
             (credentials.site.apiOrigin, TraeKeychain.apiOrigin),
-        ] where !value.isEmpty {
-            ProviderKeychainHelper.saveOAuthString(value, instanceId: instanceId, account: account)
+        ] {
+            if value.isEmpty {
+                ProviderKeychainHelper.deleteOAuthString(instanceId: instanceId, account: account)
+            } else {
+                ProviderKeychainHelper.saveOAuthString(value, instanceId: instanceId, account: account)
+            }
         }
         logger.info("signed in instanceId=\(instanceId.prefix(8)) site=\(credentials.site.rawValue)")
         return credentials.accessToken
@@ -126,66 +181,102 @@ final class TraeAccountManager {
 
     // MARK: - Token
 
-    func validAccessToken(instanceId: String) async throws -> String {
+    func validAccessToken(
+        instanceId: String,
+        expectedSite: TraeAPI.Site? = nil,
+        forceRefresh: Bool = false
+    ) async throws -> String {
+        try Task.checkCancellation()
+        // Check even when the token is fresh or a renewal is already running:
+        // an explicit international provider must never send a saved CN token.
+        let storedSite = ProviderKeychainHelper.loadOAuthString(
+            instanceId: instanceId, account: TraeKeychain.site)
+        if let expectedSite, storedSite != expectedSite.rawValue {
+            throw TraeSignIn.FlowError.wrongBuild
+        }
         guard let access = ProviderKeychainHelper.loadOAuthString(
             instanceId: instanceId, account: TraeKeychain.access
         ), !access.isEmpty else {
             throw ManagerError.notSignedIn
         }
-        let expiry = ProviderKeychainHelper.loadOAuthString(
-            instanceId: instanceId, account: TraeKeychain.expiry
-        ).flatMap(TimeInterval.init)
-        if let expiry, expiry > Date().timeIntervalSince1970 + refreshBuffer {
+        let snapshot = identity(instanceId: instanceId)
+        if let existing = inFlight[instanceId] {
+            if existing.identity == snapshot {
+                let token = try await existing.task.value
+                try Task.checkCancellation()
+                return token
+            }
+            cancelRefresh(instanceId: instanceId)
+        }
+        let expiry = TraeSignIn.expiry(ProviderKeychainHelper.loadOAuthString(
+            instanceId: instanceId, account: TraeKeychain.expiry))
+        if !forceRefresh, expiry == nil || expiry! > Date().timeIntervalSince1970 + refreshBuffer {
             return access
         }
-        // A pasted token has no refresh token; hand it back as-is and let the
-        // upstream decide. Renewing is impossible here rather than failed.
+        // Pasted tokens without renewal credentials remain usable as before;
+        // an explicit forced renewal must report that it cannot renew them.
         guard let refresh = ProviderKeychainHelper.loadOAuthString(
             instanceId: instanceId, account: TraeKeychain.refresh
         ), !refresh.isEmpty else {
+            if forceRefresh { throw ManagerError.notSignedIn }
             return access
         }
-        if let existing = inFlight[instanceId] { return try await existing.value }
-        let task = Task<String, Error> { [weak self] in
-            guard let self else { throw ManagerError.notSignedIn }
-            return try await self.performRefresh(instanceId: instanceId, refreshToken: refresh)
+        let site: TraeAPI.Site
+        if let storedSite, !storedSite.isEmpty {
+            guard let parsed = TraeAPI.Site(rawValue: storedSite) else {
+                throw TraeSignIn.FlowError.wrongBuild
+            }
+            site = parsed
+        } else {
+            site = .china // Legacy records predate the site field.
         }
-        inFlight[instanceId] = task
-        defer { inFlight[instanceId] = nil }
-        return try await task.value
-    }
-
-    private func performRefresh(instanceId: String, refreshToken: String) async throws -> String {
         let userID = ProviderKeychainHelper.loadOAuthString(
             instanceId: instanceId, account: TraeKeychain.userID) ?? ""
         let gate = ProviderKeychainHelper.loadOAuthString(
             instanceId: instanceId, account: TraeKeychain.gate)
-        let fallback = ProviderKeychainHelper.loadOAuthString(
-            instanceId: instanceId, account: TraeKeychain.site) == "international"
-            ? TraeAPI.Site.international : .china
-        let origin = gate.flatMap { $0.isEmpty ? nil : $0 } ?? fallback.exchangeOrigins[0]
-
-        let renewed: (access: String, refresh: String, expiresAt: Double?)
-        do {
-            renewed = try await TraeSignIn.renew(
-                refreshToken: refreshToken, userID: userID, gate: origin)
-        } catch {
-            // The refresh token is dead; keeping it would make every later
-            // request fail with the same error.
-            logout(instanceId: instanceId)
-            throw error
+        let origin = gate.flatMap { $0.isEmpty ? nil : $0 } ?? site.exchangeOrigins[0]
+        guard site.exchangeOrigins.contains(origin) else {
+            throw TraeSignIn.FlowError.server("Trae 已保存的登录网关与账号版本不匹配，请重新登录。")
         }
-        ProviderKeychainHelper.saveOAuthString(
-            renewed.access, instanceId: instanceId, account: TraeKeychain.access)
-        if !renewed.refresh.isEmpty {
+        let flightID = UUID()
+        let task = Task<String, Error> {
+            // Let the creator publish the flight before the first identity check.
+            await Task.yield()
+            try Task.checkCancellation()
+            guard self.inFlight[instanceId]?.id == flightID,
+                  self.identity(instanceId: instanceId) == snapshot else {
+                throw CancellationError()
+            }
+            // Network/server failures leave the current credential intact.
+            let renewed = try await TraeSignIn.renew(
+                refreshToken: refresh, userID: userID, gate: origin)
+            try Task.checkCancellation()
+            guard self.inFlight[instanceId]?.id == flightID,
+                  self.identity(instanceId: instanceId) == snapshot else {
+                throw CancellationError()
+            }
             ProviderKeychainHelper.saveOAuthString(
-                renewed.refresh, instanceId: instanceId, account: TraeKeychain.refresh)
+                renewed.access, instanceId: instanceId, account: TraeKeychain.access)
+            if !renewed.refresh.isEmpty {
+                ProviderKeychainHelper.saveOAuthString(
+                    renewed.refresh, instanceId: instanceId, account: TraeKeychain.refresh)
+            }
+            if let expiresAt = renewed.expiresAt {
+                ProviderKeychainHelper.saveOAuthString(
+                    String(expiresAt), instanceId: instanceId, account: TraeKeychain.expiry)
+            } else {
+                ProviderKeychainHelper.deleteOAuthString(instanceId: instanceId, account: TraeKeychain.expiry)
+            }
+            self.logger.info("renewed instanceId=\(instanceId.prefix(8))")
+            return renewed.access
         }
-        if let expiresAt = renewed.expiresAt {
-            ProviderKeychainHelper.saveOAuthString(
-                String(expiresAt), instanceId: instanceId, account: TraeKeychain.expiry)
+        inFlight[instanceId] = RefreshFlight(id: flightID, identity: snapshot, task: task)
+        defer {
+            // An older waiter must not remove a newer flight after re-login.
+            if inFlight[instanceId]?.id == flightID { inFlight[instanceId] = nil }
         }
-        logger.info("renewed instanceId=\(instanceId.prefix(8))")
-        return renewed.access
+        let token = try await task.value
+        try Task.checkCancellation()
+        return token
     }
 }

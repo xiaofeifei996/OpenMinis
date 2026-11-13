@@ -196,7 +196,7 @@ enum BackupSecretsCollector {
             return ProviderKeychainHelper.loadOAuthToken(instanceId: id, as: CopilotTokenStorage.self)
                 .flatMap { try? JSONEncoder().encode($0) }
         case .antigravity, .openAIResponses, .openRouter, .workBuddyChina, .workBuddyAI, .raccoon, .autoClaw,
-             .trae, .unsupported:
+             .trae, .traeInternational, .unsupported:
             return nil
         }
     }

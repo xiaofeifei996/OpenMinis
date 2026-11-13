@@ -671,6 +671,7 @@ struct ProviderInstanceDetailView: View {
         case .raccoon: return RaccoonOAuthFlow.llmBase
         case .autoClaw: return AutoClawAPI.defaultBase
         case .trae: return TraeAPI.Site.china.apiOrigin
+        case .traeInternational: return TraeAPI.Site.international.apiOrigin
         case .unsupported: return "—"
         }
     }
@@ -1114,7 +1115,7 @@ struct ProviderInstanceDetailView: View {
         case .workBuddyChina, .workBuddyAI: return false // dedicated WorkBuddy OAuth flow
         case .raccoon: return RaccoonOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .autoClaw: return AutoClawAccountManager.shared.isAuthenticated(instanceId: instance.id)
-        case .trae: return TraeAccountManager.shared.isAuthenticated(instanceId: instance.id)
+        case .trae, .traeInternational: return TraeAccountManager.shared.isAuthenticated(instanceId: instance.id)
         case .unsupported: return false // synced from newer build
         }
     }
@@ -1199,7 +1200,7 @@ struct ProviderInstanceDetailView: View {
                     AutoClawAccountManager.shared.maskedToken(instanceId: instance.id)]
                 .compactMap { $0 }
                 .joined(separator: " · ")
-        case .trae:
+        case .trae, .traeInternational:
             guard TraeAccountManager.shared.isAuthenticated(instanceId: instance.id) else {
                 return AppLocalized("Not authenticated")
             }
@@ -1228,6 +1229,7 @@ struct ProviderInstanceDetailView: View {
         case .raccoon: return "使用小浣熊账号登录"
         case .autoClaw: return "使用智谱账号登录"
         case .trae: return "使用 Trae 账号登录"
+        case .traeInternational: return "使用 Trae 国际版账号登录"
         case .unsupported: return AppLocalized("Sign In")
         }
     }
@@ -1248,6 +1250,7 @@ struct ProviderInstanceDetailView: View {
             case .raccoon: try await RaccoonOAuthManager.shared.login(instanceId: instance.id)
             case .autoClaw: break // phone + SMS flow runs in AutoClawLoginSheet
             case .trae: try await TraeAccountManager.shared.signIn(instanceId: instance.id)
+            case .traeInternational: try await TraeAccountManager.shared.signIn(instanceId: instance.id, site: .international)
             case .unsupported: break
             }
             // [T-provider-oauth-model-discovery] Reconcile models on a
@@ -1299,7 +1302,7 @@ struct ProviderInstanceDetailView: View {
         case .workBuddyChina, .workBuddyAI: break // credentials managed by its OAuth flow
         case .raccoon: RaccoonOAuthManager.shared.logout(instanceId: instance.id)
         case .autoClaw: AutoClawAccountManager.shared.logout(instanceId: instance.id)
-        case .trae: TraeAccountManager.shared.logout(instanceId: instance.id)
+        case .trae, .traeInternational: TraeAccountManager.shared.logout(instanceId: instance.id)
         case .unsupported: break
         }
     }
@@ -1331,7 +1334,7 @@ struct ProviderInstanceDetailView: View {
             token = try? await RaccoonOAuthManager.shared.validAccessToken(instanceId: instance.id)
         case .autoClaw:
             token = try? await AutoClawAccountManager.shared.validAccessToken(instanceId: instance.id)
-        case .trae:
+        case .trae, .traeInternational:
             token = try? await TraeAccountManager.shared.validAccessToken(instanceId: instance.id)
         case .unsupported:
             token = nil
@@ -1353,7 +1356,7 @@ struct ProviderInstanceDetailView: View {
         case .workBuddyChina, .workBuddyAI: return "" // OAuth only
         case .raccoon: return "" // OAuth only
         case .autoClaw: return "" // OAuth only
-        case .trae: return "" // OAuth only
+        case .trae, .traeInternational: return "" // OAuth only
         case .antigravity: return "API Key..."
         case .openRouter: return "sk-or-..."
         case .openAIResponses: return "sk-..."

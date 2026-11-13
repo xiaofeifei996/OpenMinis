@@ -420,7 +420,7 @@ private struct InstanceRow: View {
         case .workBuddyChina, .workBuddyAI: return false // handled by the dedicated login flow
         case .raccoon: return RaccoonOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .autoClaw: return AutoClawAccountManager.shared.isAuthenticated(instanceId: instance.id)
-        case .trae: return TraeAccountManager.shared.isAuthenticated(instanceId: instance.id)
+        case .trae, .traeInternational: return TraeAccountManager.shared.isAuthenticated(instanceId: instance.id)
         case .unsupported: return false // synced from newer build
         }
     }

@@ -3342,7 +3342,7 @@ final class ProviderConfigStore: ObservableObject {
                 token = try await RaccoonOAuthManager.shared.validAccessToken(instanceId: instance.id)
             }
             return try await RaccoonOAuthFlow.fetchModels(accessToken: token)
-        case (.trae, _):
+        case (.trae, _), (.traeInternational, _):
             // The directory is a POST that names a roster function, and its
             // entries are the only callable model ids.
             let token: String
@@ -3351,11 +3351,11 @@ final class ProviderConfigStore: ObservableObject {
             ), !manual.isEmpty {
                 token = manual
             } else {
-                token = try await TraeAccountManager.shared.validAccessToken(instanceId: instance.id)
+                token = try await TraeAccountManager.shared.validAccessToken(
+                    instanceId: instance.id,
+                    expectedSite: instance.providerType == .traeInternational ? .international : nil)
             }
-            let origin = instance.effectiveCustomBaseURL
-                ?? TraeAccountManager.apiOrigin(instanceId: instance.id)
-                ?? TraeAPI.Site.china.apiOrigin
+            let origin = TraeAccountManager.resolvedOrigin(instance: instance)
             let ids = TraeAccountManager.extraHeaderValues(instanceId: instance.id)
             var headers = TraeAPI.clientHeaders()
             headers.merge(TraeAPI.accountHeaders(
@@ -3365,15 +3365,18 @@ final class ProviderConfigStore: ObservableObject {
             let roster = await TraeAPI.roster(origin: origin, headers: headers)
             guard !roster.isEmpty else { throw ModelRefreshError.noCredential }
             return roster.map { entry in
-                LLMModel(
+                var model = LLMModel(
                     id: entry.id,
                     displayName: entry.displayName,
-                    provider: "Trae",
+                    provider: instance.providerType.displayName,
                     modalityOverride: .textOnly,
                     contextWindow: entry.contextWindow,
                     maxOutputTokens: entry.maxTokens,
-                    supportsReasoning: entry.reasoning ? nil : false
+                    supportsReasoning: entry.reasoning,
+                    interleavedReasoningField: "reasoning_content"
                 )
+                model.limitsReportedByEndpoint = true
+                return model
             }
 
         case (.autoClaw, _):
@@ -3588,6 +3591,7 @@ final class ProviderConfigStore: ObservableObject {
         case .raccoon: return RaccoonOAuthFlow.llmBase
         case .autoClaw: return AutoClawAPI.defaultBase
         case .trae: return TraeAPI.Site.china.apiOrigin
+        case .traeInternational: return TraeAPI.Site.international.apiOrigin
         case .gemini: return "https://generativelanguage.googleapis.com"
         case .openRouter: return "https://openrouter.ai/api"
         case .antigravity: return nil // No public base URL

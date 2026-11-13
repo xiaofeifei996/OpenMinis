@@ -10,16 +10,21 @@ a subscription or quota. They are text-only.
 | Provider | Chat origin | Sign-in behavior |
 | --- | --- | --- |
 | Trae | `https://trae-api-cn.mchost.guru` by default | Legacy automatic behavior retained |
-| Trae 国际版 | `https://core-normal.trae.ai` by default | Explicit Trae international sign-in |
+| Trae 国际版 | `https://coresg-normal.trae.ai` by default | Explicit Trae international sign-in |
 
 ## Network contract
 
 - Chat: `POST /api/agent/v3/llm_utils_chat` (not OpenAI's
   `/chat/completions`).
-- Model directory: `POST /api/ide/v1/get_detail_param` for
-  `solo_work_remote` followed by `solo_work_lite`.
-- The directory-resolved `function` is echoed in the chat body so lite-only
-  models are routed to the roster that published them.
+- Model directory: `GET /api/remote/v1/models?functions=…` on the SOLO web
+  directory (the roster the vendor's own picker renders), asking every chat
+  function (`solo_work_remote`, `solo_work_lite`, `solo_agent_remote`,
+  `chat_v3`, `solo_coder`) and unioning the groups in that priority order.
+  `POST /api/ide/v1/get_detail_param` is still asked for the per-function
+  metadata the directory does not publish, and fills in anything the web
+  directory omits.
+- The directory-resolved `function` is echoed in the chat body so a model is
+  routed to the roster that published it.
 - The access token is sent in all three places required by Trae:
   `Authorization: Cloud-IDE-JWT …`, `X-Ide-Token`, and `X-Cloudide-Token`.
 - Responses use Trae's `output`, `token_usage`, `done`, and `error` events and

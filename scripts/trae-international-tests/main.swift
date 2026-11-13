@@ -98,7 +98,7 @@ private func testSitesAndHeaders() throws {
     let international = TraeAPI.Site.international
 
     try check(china.apiOrigin == "https://trae-api-cn.mchost.guru", "CN chat origin changed")
-    try check(international.apiOrigin == "https://core-normal.trae.ai", "International chat origin changed")
+    try check(international.apiOrigin == "https://coresg-normal.trae.ai", "International chat origin changed")
     try check(china.fixedLoginHost == "https://www.trae.cn", "CN fixed login host changed")
     try check(international.fixedLoginHost == nil, "International login must come from guidance")
     try check(china.guidanceURLs.isEmpty, "CN must not use international guidance URLs")
@@ -135,8 +135,13 @@ private func testSitesAndHeaders() throws {
     try check(account["X-Ide-Token"] == "token" && account["X-Cloudide-Token"] == "token", "Trae token fan-out changed")
     try check(account["x-uid"] == "user-123" && account["x-device-id"] == "0", "Trae account identity headers changed")
     try check(account["x-machine-id"]?.count == 32, "Derived machine id must remain 32 hex characters")
-    try check(TraeAPI.chatURL(origin: international.apiOrigin)?.absoluteString == "https://core-normal.trae.ai/api/agent/v3/llm_utils_chat", "International chat path changed")
+    try check(TraeAPI.chatURL(origin: international.apiOrigin)?.absoluteString == "https://coresg-normal.trae.ai/api/agent/v3/llm_utils_chat", "International chat path changed")
     try check(TraeAPI.directoryURL(origin: china.apiOrigin)?.absoluteString == "https://trae-api-cn.mchost.guru/api/ide/v1/get_detail_param", "Directory path changed")
+    // The roster host is not always the chat host: China splits them, the
+    // international build has mirrored gateways.
+    try check(TraeAPI.remoteOrigins(chatOrigin: china.apiOrigin).first == "https://solo.trae.cn", "CN roster host changed")
+    try check(TraeAPI.remoteOrigins(chatOrigin: international.apiOrigin).contains("https://coresg-normal.trae.ai"), "International roster host changed")
+    try check(TraeAPI.directoryFunctions.count >= 5, "Only a subset of the chat functions is asked")
 }
 
 private func testMendedBody() throws {
@@ -207,17 +212,39 @@ private func testDirectoryRequestAndRoster() async throws {
     try check(directoryBody["need_prompt"] as? Bool == false, "Directory prompt flag changed")
 
     TraeMockURLProtocol.handler = { request in
+        let url = request.url?.absoluteString ?? ""
+        if url.contains("/api/remote/v1/models") {
+            // The SOLO web directory: one document, grouped by function, which
+            // is what the vendor's own picker renders.
+            let groups: [[String: Any]] = [
+                ["function": "solo_work_lite", "models": [
+                    ["name": "gpt-6.1-sol", "display_name": "GPT-6.1-Sol",
+                     "context_window_tokens": ["dev": 262_144],
+                     "features": ["reasoning": ["enable": true]]],
+                    ["name": "shared", "display_name": "Lite shared"],
+                ]],
+                ["function": "solo_work_remote", "models": [
+                    ["name": "shared", "display_name": "Remote shared"],
+                    ["name": "remote-only", "display_name": "Remote only",
+                     "context_window_tokens": ["dev": 9000]],
+                    ["name": "search_agent_internal"],
+                    ["name": "custom_model_hidden"],
+                ]],
+                ["function": "chat_v3", "models": [
+                    ["name": "Seed-2.1-Turbo", "display_name": "Seed-2.1-Turbo"],
+                ]],
+                ["function": "code_review_summary", "models": [
+                    ["name": "review-helper", "display_name": "Review helper"],
+                ]],
+            ]
+            return (200, (try? jsonData(["code": 0, "data": ["list": groups]])) ?? Data())
+        }
         let body = (try? JSONSerialization.jsonObject(with: requestBody(request))) as? [String: Any] ?? [:]
         let function = body["function"] as? String ?? ""
         let entries: [[String: Any]] = function == "solo_work_remote" ? [
             ["config_name": "shared", "display_config": ["display_name": "Remote shared"], "model_detail_list": [["max_tokens": 111]]],
             ["config_name": "remote-only", "display_config": ["model_capability": "reasoning_model"], "context_window_tokens": ["dev": 9000]],
-            ["config_name": "search_agent_internal"],
-            ["config_name": "custom_model_hidden"],
-        ] : [
-            ["config_name": "shared", "display_config": ["display_name": "Lite shared"]],
-            ["config_name": "lite-only", "display_config": ["display_name": "Lite only"]],
-        ]
+        ] : []
         let document: [String: Any] = ["config_info_list": entries]
         return (200, (try? jsonData(document)) ?? Data())
     }
@@ -227,15 +254,19 @@ private func testDirectoryRequestAndRoster() async throws {
     defer { TraeMockURLProtocol.handler = nil }
 
     let roster = await TraeAPI.roster(origin: "https://mock.trae.test", headers: headers, session: session)
-    try check(roster.map(\.id) == ["shared", "remote-only", "lite-only"], "Directory roster did not deduplicate in declared precedence")
-    try check(roster.map(\.function) == ["solo_work_remote", "solo_work_remote", "solo_work_lite"], "Directory function provenance was lost")
+    // Declared function priority wins over response order, and the picker's
+    // models are present — not just whatever get_detail_param happened to list.
+    try check(roster.map(\.id) == ["shared", "remote-only", "gpt-6.1-sol", "Seed-2.1-Turbo"],
+              "Directory roster did not merge in declared precedence: \(roster.map(\.id))")
+    try check(roster.map(\.function) == ["solo_work_remote", "solo_work_remote", "solo_work_lite", "chat_v3"],
+              "Directory function provenance was lost: \(roster.map(\.function))")
     try check(roster[1].reasoning && roster[1].contextWindow == 9000, "Directory capability metadata was lost")
-    try check(roster[0].maxTokens == 111, "Directory max token metadata was lost")
-
+    try check(roster[0].maxTokens == 111, "get_detail_param metadata did not refine the directory row")
+    try check(roster[2].reasoning, "Reasoning capability was not read from the directory")
     let cache = TraeAPI.ModelFunctions()
     cache.store(roster, identity: "origin-a:account-a")
     try check(cache.function(for: "shared") == "solo_work_remote", "Model function precedence was not cached")
-    try check(cache.function(for: "lite-only") == "solo_work_lite", "Model function provenance was not cached")
+    try check(cache.function(for: "gpt-6.1-sol") == "solo_work_lite", "Model function provenance was not cached")
     try check(cache.function(for: "missing") == TraeAPI.defaultFunction, "Unknown models need the safe default function")
     try check(!cache.needsDirectory(identity: "origin-a:account-a"), "Matching directory identity should be cached")
     try check(cache.needsDirectory(identity: "origin-b:account-a"), "Origin must participate in directory cache identity")

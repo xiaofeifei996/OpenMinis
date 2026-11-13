@@ -32,10 +32,15 @@ enum TraeAPI {
         }
 
         /// Where chat and the model directory live.
+        ///
+        /// The international gateway is `coresg-normal.trae.ai`: the desktop
+        /// client and TRAE SOLO both send `llm_utils_chat` and the SOLO
+        /// directory there. `core-normal.trae.ai` is the account-service host
+        /// and does not serve the roster the picker renders.
         var apiOrigin: String {
             switch self {
             case .china: return "https://trae-api-cn.mchost.guru"
-            case .international: return "https://core-normal.trae.ai"
+            case .international: return "https://coresg-normal.trae.ai"
             }
         }
 
@@ -113,10 +118,21 @@ enum TraeAPI {
     static let ideVersion = "0.1.61"
     static let versionCode = 20260820
 
-    /// The roster functions a model may be listed under. `solo_work_remote`
-    /// first: it carries every model a user may pick (`glm-5.3` is only here,
-    /// and asking through `solo_work_lite` answers `4001 param is invalid`).
-    static let directoryFunctions = ["solo_work_remote", "solo_work_lite"]
+    /// The roster functions a model may be listed under, in the order the
+    /// vendor's own picker resolves them.
+    ///
+    /// Trae splits its callable roster across SOLO modes and a model is only
+    /// callable through the function that lists it (`glm-5.3` answers
+    /// `4001 param is invalid` outside `solo_work_remote`). Asking two of them
+    /// is what made the app show two DeepSeek rows while the official picker
+    /// listed a dozen models, so every chat function the client uses is asked
+    /// and the answers are unioned in this order.
+    static let directoryFunctions = [
+        "solo_work_remote", "solo_work_lite", "solo_agent_remote", "chat_v3", "solo_coder",
+    ]
+    /// Functions that can carry a chat model. A row listed only under a helper
+    /// roster (`code_review_summary`, `fast_apply`, …) is not callable here.
+    static let chatFunctions: Set<String> = Set(directoryFunctions)
     static let defaultFunction = "solo_work_remote"
     static let defaultModel = "auto"
 
@@ -128,6 +144,56 @@ enum TraeAPI {
 
     static func directoryURL(origin: String) -> URL? {
         URL(string: origin + directoryPath)
+    }
+
+    /// The SOLO web directory the vendor's own model picker renders. Unlike
+    /// `get_detail_param` (one roster per request, chat-function only) this
+    /// answers every requested function in one document, which is where the
+    /// models that were missing came from.
+    static let remoteDirectoryPath = "/api/remote/v1/models"
+
+    static func remoteDirectoryURL(origin: String, functions: [String]) -> URL? {
+        let list = functions.joined(separator: ",")
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: ",+&=")
+        guard let encoded = list.addingPercentEncoding(withAllowedCharacters: allowed) else { return nil }
+        return URL(string: origin + remoteDirectoryPath + "?functions=" + encoded)
+    }
+
+    /// Where the SOLO web directory lives, given the chat origin.
+    ///
+    /// The directory is not always on the chat host: the China build serves
+    /// chat from `trae-api-cn.mchost.guru` but the roster from `solo.trae.cn`.
+    /// The international build serves both from `coresg-normal.trae.ai`. A
+    /// custom base is assumed to mirror the directory under the same origin,
+    /// which is the only thing a third-party endpoint could reasonably do.
+    /// Directory hosts to try, in order. The international build has mirrored
+    /// gateways (`coresg-normal` and `core-normal`) that serve the same roster;
+    /// the China build splits chat (`mchost.guru`) from the roster
+    /// (`solo.trae.cn`). Trying the mirror only when the first answer is
+    /// unusable keeps one refresh cheap in the normal case.
+    static func remoteOrigins(chatOrigin: String) -> [String] {
+        let lower = chatOrigin.lowercased()
+        if lower.contains("mchost.guru") || lower.contains("trae.cn") {
+            return ["https://solo.trae.cn", "https://trae-api-cn.mchost.guru"]
+        }
+        if lower.contains("trae.ai") {
+            return ["https://coresg-normal.trae.ai", "https://core-normal.trae.ai"]
+        }
+        return [chatOrigin]
+    }
+
+    /// The SOLO web portal's own dressing differs by build; both are accepted
+    /// by the gateways, so each keeps the shape its own portal sends.
+    ///
+    /// The backend validates `Origin`/`Referer` against the session's real
+    /// origin, so a stale value answers 401 even with a fresh token.
+    static func remoteDressing(chatOrigin: String) -> (referer: String, timezone: String, language: String) {
+        let lower = chatOrigin.lowercased()
+        let china = lower.contains("mchost.guru") || lower.contains("trae.cn")
+        return china
+            ? ("https://solo.trae.cn/", "Asia/Shanghai", "zh-cn")
+            : ("https://work.trae.ai/", "Asia/Singapore", "en")
     }
 
     // MARK: - Headers
@@ -347,9 +413,122 @@ enum TraeAPI {
         return id == "sagitta" || id == "aquila"
     }
 
-    /// The live roster: every function asked at once, first listing of an id
-    /// winning. A failure costs only its own models.
+    /// The live roster: the SOLO web directory first (one document, every chat
+    /// function), then `get_detail_param` for anything it did not list.
+    ///
+    /// The web directory is what the vendor's own picker renders, so it is the
+    /// authoritative "what can this account choose" answer; `get_detail_param`
+    /// supplies the per-function metadata (`max_tokens`, capability flags) the
+    /// directory does not publish. A failure costs only that source, never the
+    /// whole list.
     static func roster(origin: String, headers: [String: String], session: URLSession = .shared) async -> [Entry] {
+        async let remote = remoteRoster(origin: origin, headers: headers, session: session)
+        async let detail = detailRoster(origin: origin, headers: headers, session: session)
+        let (fromRemote, fromDetail) = await (remote, detail)
+        if fromRemote.isEmpty { return fromDetail }
+        // Directory order wins; detail metadata refines a row it also lists.
+        var byID = Dictionary(fromDetail.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var seen = Set<String>()
+        var out: [Entry] = []
+        for entry in fromRemote where seen.insert(entry.id).inserted {
+            if let detail = byID.removeValue(forKey: entry.id) {
+                var merged = entry
+                merged.maxTokens = detail.maxTokens
+                merged.reasoning = entry.reasoning || detail.reasoning
+                out.append(merged)
+            } else {
+                out.append(entry)
+            }
+        }
+        // Rows only `get_detail_param` knows stay callable rather than vanish.
+        for entry in fromDetail where seen.insert(entry.id).inserted { out.append(entry) }
+        return out
+    }
+
+    /// `GET {origin}/api/remote/v1/models?functions=…`, grouped by function.
+    static func remoteDirectoryRequest(origin: String, headers: [String: String]) -> URLRequest? {
+        guard let url = remoteDirectoryURL(origin: origin, functions: directoryFunctions) else {
+            return nil
+        }
+        var request = URLRequest(url: url, timeoutInterval: 20)
+        request.httpMethod = "GET"
+        for (name, value) in headers where !value.isEmpty {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
+        // The SOLO web portal's own dressing: the gateway accepts the plugin
+        // identity too, but these are what the picker request carries.
+        let dressing = remoteDressing(chatOrigin: origin)
+        request.setValue("web", forHTTPHeaderField: "x-trae-client-type")
+        request.setValue(dressing.timezone, forHTTPHeaderField: "x-trae-user-timezone")
+        request.setValue(dressing.language, forHTTPHeaderField: "x-preferenced-language")
+        request.setValue(dressing.referer, forHTTPHeaderField: "Referer")
+        request.setValue(dressing.referer, forHTTPHeaderField: "Origin")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        return request
+    }
+
+    /// Parse `data.list[] → { function, models[] }`, preserving the declared
+    /// chat-function priority and keeping models the picker can actually offer.
+    static func remoteEntries(in document: [String: Any]) -> [Entry] {
+        let data = document["data"] as? [String: Any] ?? document
+        let groups = data["list"] as? [[String: Any]] ?? []
+        // A function can be sent more than once; bucket instead of overwriting.
+        var byFunction: [String: [[String: Any]]] = [:]
+        for group in groups {
+            let name = group["function"] as? String ?? ""
+            byFunction[name, default: []].append(group)
+        }
+        var seen = Set<String>()
+        var out: [Entry] = []
+        func append(_ function: String?, _ models: [[String: Any]]) {
+            let attributed = function.flatMap { chatFunctions.contains($0) ? $0 : nil }
+            for raw in models {
+                guard let id = raw["name"] as? String, !id.isEmpty, !isHidden(id) else { continue }
+                guard seen.insert(id).inserted else { continue }
+                let display = (raw["display_name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? id
+                let context = raw["context_window_tokens"] as? [String: Any] ?? [:]
+                let window = (context["dev"] as? NSNumber)?.intValue ?? 0
+                let features = raw["features"] as? [String: Any] ?? [:]
+                let reasoning = (features["reasoning"] as? [String: Any])?["enable"] as? Bool == true
+                out.append(Entry(
+                    id: id,
+                    displayName: display,
+                    function: attributed ?? defaultFunction,
+                    reasoning: reasoning,
+                    contextWindow: window > 0 ? window : 200_000,
+                    maxTokens: 64_000
+                ))
+            }
+        }
+        for function in directoryFunctions {
+            for group in byFunction[function] ?? [] {
+                append(function, group["models"] as? [[String: Any]] ?? [])
+            }
+        }
+        // A model listed only under a helper roster (`code_review_summary`,
+        // `fast_apply`, …) is not a chat model: `llm_utils_chat` would answer
+        // 4001. Leaving it out is what keeps every listed row callable.
+        return out
+    }
+
+    static func remoteRoster(origin: String, headers: [String: String], session: URLSession) async -> [Entry] {
+        // Mirror gateways serve the same roster; use the first usable answer.
+        for directoryOrigin in remoteOrigins(chatOrigin: origin) {
+            guard let request = remoteDirectoryRequest(origin: directoryOrigin, headers: headers),
+                  let (data, response) = try? await session.data(for: request),
+                  (response as? HTTPURLResponse)?.statusCode == 200,
+                  let document = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                continue
+            }
+            let entries = remoteEntries(in: document)
+            if !entries.isEmpty { return entries }
+        }
+        return []
+    }
+
+    /// The per-function `get_detail_param` roster, asked concurrently. A failure
+    /// costs only its own models.
+    static func detailRoster(origin: String, headers: [String: String], session: URLSession) async -> [Entry] {
         await withTaskGroup(of: (Int, [Entry]).self) { group in
             for (index, function) in directoryFunctions.enumerated() {
                 guard let request = directoryRequest(origin: origin, function: function, headers: headers) else {

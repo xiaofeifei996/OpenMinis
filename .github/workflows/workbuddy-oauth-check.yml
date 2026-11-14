@@ -71,6 +71,11 @@ jobs:
             scripts/trae-international-tests/main.swift
           ./build/trae-international-tests/trae-tests
 
+      - name: Check re-signed app startup migration
+        run: |
+          swiftc -frontend -parse src/ios/MinisApp.swift
+          python3 scripts/test_startup_migration.py
+
       - name: Validate Xcode project prerequisites
         shell: bash
         run: |

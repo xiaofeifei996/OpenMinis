@@ -149,7 +149,8 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
         // [T-copilot-provider] Copilot's User-Agent is part of the protocol —
         // the API rejects requests that do not look like the editor plugin — so
         // it must not be user-overridable the way a proxy's UA is.
-        case .gemini, .antigravity, .githubCopilot, .unsupported:
+        case .gemini, .antigravity, .githubCopilot, .workBuddyChina, .workBuddyAI, .raccoon, .autoClaw,
+             .trae, .traeInternational, .unsupported:
             return false
         }
     }
@@ -186,7 +187,8 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
         switch providerType {
         case .openAI, .openAIResponses, .openRouter, .xAI, .kimiCode, .githubCopilot:
             return OpenCodeChannel.looksLikeOpenCodeBaseURL(effectiveCustomBaseURL)
-        case .anthropic, .gemini, .antigravity, .unsupported:
+        case .anthropic, .gemini, .antigravity, .workBuddyChina, .workBuddyAI, .raccoon, .autoClaw,
+             .trae, .traeInternational, .unsupported:
             return false
         }
     }
@@ -239,7 +241,7 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
     /// affected by `imageEndpointMode`.
     var supportsImageEndpointSetting: Bool {
         switch providerType {
-        case .openAI, .openAIResponses, .openRouter, .xAI, .kimiCode:
+        case .openAI, .openAIResponses, .openRouter, .xAI, .kimiCode, .raccoon, .autoClaw, .trae, .traeInternational:
             return true
         default:
             return false
@@ -355,7 +357,21 @@ struct ProviderInstance: Identifiable, Codable, Hashable {
             return ProviderKeychainHelper.loadOAuthToken(
                 instanceId: id, as: CopilotTokenStorage.self, caller: "hasAnyCredential"
             )?.githubToken.isEmpty == false
-        case .antigravity, .openRouter, .unsupported:
+        case .raccoon:
+            // Signed in through the vendor's browser flow; same direct-read
+            // shape as the other provider-specific stores.
+            return ProviderKeychainHelper.loadOAuthString(
+                instanceId: id, account: RaccoonKeychain.access, caller: "hasAnyCredential"
+            )?.isEmpty == false
+        case .autoClaw:
+            return ProviderKeychainHelper.loadOAuthString(
+                instanceId: id, account: AutoClawKeychain.access, caller: "hasAnyCredential"
+            )?.isEmpty == false
+        case .trae, .traeInternational:
+            return ProviderKeychainHelper.loadOAuthString(
+                instanceId: id, account: TraeKeychain.access, caller: "hasAnyCredential"
+            )?.isEmpty == false
+        case .antigravity, .openRouter, .workBuddyChina, .workBuddyAI, .unsupported:
             // unsupported = synced from a newer build; no usable credential here.
             // antigravity stores its token via AntigravityOAuthManager (no
             // standalone Codable used by the diagnostic); OpenRouter is

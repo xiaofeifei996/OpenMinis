@@ -417,6 +417,10 @@ private struct InstanceRow: View {
         case .xAI: return XAIOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .kimiCode: return KimiOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .githubCopilot: return CopilotOAuthManager.shared.isAuthenticated(instanceId: instance.id)
+        case .workBuddyChina, .workBuddyAI: return false // handled by the dedicated login flow
+        case .raccoon: return RaccoonOAuthManager.shared.isAuthenticated(instanceId: instance.id)
+        case .autoClaw: return AutoClawAccountManager.shared.isAuthenticated(instanceId: instance.id)
+        case .trae, .traeInternational: return TraeAccountManager.shared.isAuthenticated(instanceId: instance.id)
         case .unsupported: return false // synced from newer build
         }
     }

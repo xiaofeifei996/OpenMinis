@@ -125,6 +125,21 @@ extension AIChatViewModel {
             return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeXAIProvider(instance: instance, model: entry.model)))
         case .kimiCode:
             return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeKimiProvider(instance: instance, model: entry.model)))
+        case .workBuddyChina:
+            return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeWorkBuddyChinaProvider(instance: instance, model: entry.model)))
+        case .workBuddyAI:
+            // Must NOT share the China builder: it points at
+            // copilot.tencent.com with the China client fingerprint, so an
+            // international token is answered 401 by that gateway. Quick Test
+            // goes through `makeProvider`, which already splits them — this is
+            // the chat-session path, which builds its provider separately.
+            return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeWorkBuddyAIProvider(instance: instance, model: entry.model)))
+        case .raccoon:
+            return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeRaccoonProvider(instance: instance, model: entry.model)))
+        case .autoClaw:
+            return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeAutoClawProvider(instance: instance, model: entry.model)))
+        case .trae, .traeInternational:
+            return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeTraeProvider(instance: instance, model: entry.model)))
         case .githubCopilot:
             // [T-copilot-no-chat-warning] No warning in the chat.
             //

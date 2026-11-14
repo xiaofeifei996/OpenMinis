@@ -414,23 +414,55 @@ extension AIChatViewModel {
             .appendingPathComponent("browser", isDirectory: true)
     }
 
+    /// Private fallback for installations whose signing profile does not
+    /// grant the App Group entitlement. This keeps the main app launchable
+    /// instead of crashing while evaluating a force-unwrapped container URL.
+    ///
+    /// IMPORTANT: this fallback is app-local, not shared with FileProvider
+    /// extensions. Shared-file features remain unavailable until the installed
+    /// signature grants SharedContainerStore.appGroupID.
+    nonisolated static var minisAppGroupFallbackRoot: URL {
+        let root = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Application Support", isDirectory: true)
+            .appendingPathComponent("MinisAppGroupFallback", isDirectory: true)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+
     /// App Group container root for FileProvider-visible directories.
     /// Everything under this path is exposed to iOS Files via the replicated
     /// FileProvider extension. Keep ONLY user-facing subdirs (shared, skills,
     /// memory) here — anything else leaks into "On My iPhone → Minis".
+    ///
+    /// Side-loaded builds can be re-signed without the original App Group
+    /// entitlement. In that case iOS returns nil; use app-local storage so
+    /// startup and private memory access do not terminate the process.
     nonisolated static var minisAppGroupRoot: URL {
-        FileManager.default.containerURL(
+        let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: SharedContainerStore.appGroupID
-        )!.appendingPathComponent("MinisFileProvider", isDirectory: true)
+        )
+        let root = (container ?? minisAppGroupFallbackRoot)
+            .appendingPathComponent("MinisFileProvider", isDirectory: true)
+        if container == nil {
+            logger.error("[AppGroup] Missing entitlement for \(SharedContainerStore.appGroupID); using app-local storage. FileProvider sharing is unavailable.")
+        }
+        return root
     }
 
     /// App Group subdirectory for private metadata that must NOT be exposed
     /// to iOS Files (mounted-folders.json, FileProvider extension logs, etc).
-    /// Sibling of `minisAppGroupRoot` inside the same App Group container.
+    /// Sibling of minisAppGroupRoot inside the same App Group container.
+    /// Uses the same safe fallback as minisAppGroupRoot.
     nonisolated static var minisConfigRoot: URL {
-        let url = FileManager.default.containerURL(
+        let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: SharedContainerStore.appGroupID
-        )!.appendingPathComponent("MinisConfig", isDirectory: true)
+        )
+        let url = (container ?? minisAppGroupFallbackRoot)
+            .appendingPathComponent("MinisConfig", isDirectory: true)
+        if container == nil {
+            logger.error("[AppGroup] Missing entitlement for \(SharedContainerStore.appGroupID); using app-local config storage.")
+        }
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }

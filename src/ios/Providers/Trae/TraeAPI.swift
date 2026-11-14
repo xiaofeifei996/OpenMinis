@@ -136,6 +136,18 @@ enum TraeAPI {
     static let defaultFunction = "solo_work_remote"
     static let defaultModel = "auto"
 
+    /// Auto is not a model on this wire: it is the `inline_chat` scene with no
+    /// `model` / `config_name` at all. Sending `config_name: "auto"` — which is
+    /// what a plain OpenAI-shaped body would do — is rejected upstream, which
+    /// is why the row existed in the picker but never answered.
+    static let inlineFunction = "inline_chat"
+
+    /// Whether a model id means "let Trae choose".
+    static func isAuto(_ model: String) -> Bool {
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return trimmed.isEmpty || trimmed == defaultModel
+    }
+
     // MARK: - URLs
 
     static func chatURL(origin: String) -> URL? {
@@ -259,15 +271,22 @@ enum TraeAPI {
     /// everything else is this wire's own. Every transform below exists because
     /// the upstream validator rejects the un-mended form.
     static func mendedBody(_ root: [String: Any], model: String, function: String = defaultFunction) -> [String: Any] {
+        let auto = isAuto(model)
         var body: [String: Any] = [
             "app_id": appID,
             "app_version_code": versionCode,
-            "function": function,
-            "model": model,
-            "config_name": model,
+            // Auto is the inline_chat scene, and it names no model: the server
+            // picks. Both `model` and `config_name` must be ABSENT — an `auto`
+            // value in either is rejected, and `config_name` is not accepted on
+            // the inline scene at all.
+            "function": auto ? inlineFunction : function,
             "stream": true,
             "messages": mendedMessages(root["messages"] as? [[String: Any]] ?? []),
         ]
+        if !auto {
+            body["model"] = model
+            body["config_name"] = model
+        }
         if let tools = root["tools"] as? [[String: Any]], !tools.isEmpty {
             body["tools"] = mendedTools(tools)
         }

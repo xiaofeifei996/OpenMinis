@@ -3364,7 +3364,7 @@ final class ProviderConfigStore: ObservableObject {
             )) { _, new in new }
             let roster = await TraeAPI.roster(origin: origin, headers: headers)
             guard !roster.isEmpty else { throw ModelRefreshError.noCredential }
-            return roster.map { entry in
+            var models = roster.map { entry in
                 var model = LLMModel(
                     id: entry.id,
                     displayName: entry.displayName,
@@ -3378,6 +3378,23 @@ final class ProviderConfigStore: ObservableObject {
                 model.limitsReportedByEndpoint = true
                 return model
             }
+            // Auto is a real picker entry in the vendor's client but is not a
+            // `config_name` in any roster, so the refresh alone would leave it
+            // marked "not listed by provider". It is served by the inline_chat
+            // scene instead — see `TraeAPI.mendedBody`.
+            if !models.contains(where: { TraeAPI.isAuto($0.id) }) {
+                models.insert(LLMModel(
+                    id: TraeAPI.defaultModel,
+                    displayName: "Auto",
+                    provider: instance.providerType.displayName,
+                    modalityOverride: .textOnly,
+                    contextWindow: 200_000,
+                    maxOutputTokens: 64_000,
+                    supportsReasoning: nil,
+                    interleavedReasoningField: "reasoning_content"
+                ), at: 0)
+            }
+            return models
 
         case (.autoClaw, _):
             // Both the sign-in session and a pasted bearer read the same

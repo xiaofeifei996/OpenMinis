@@ -25,6 +25,10 @@ a subscription or quota. They are text-only.
   directory omits.
 - The directory-resolved `function` is echoed in the chat body so a model is
   routed to the roster that published it.
+- **Auto** is not a `config_name`: it is the `inline_chat` scene with `model`
+  and `config_name` omitted, and the server picks. Sending `"auto"` in either
+  field is rejected, which is why the row is pinned in the model list rather
+  than taken from the roster.
 - The access token is sent in all three places required by Trae:
   `Authorization: Cloud-IDE-JWT …`, `X-Ide-Token`, and `X-Cloudide-Token`.
 - Responses use Trae's `output`, `token_usage`, `done`, and `error` events and

@@ -196,6 +196,16 @@ private func testMendedBody() throws {
     let parameters = try jsonObject(function["parameters"] as! String)
     try check(parameters["type"] as? String == "object", "Tool parameter JSON was not preserved")
 
+    // Auto is the inline_chat scene with NO model name. Sending
+    // `config_name: "auto"` is what made the picker row unusable.
+    let autoBody = TraeAPI.mendedBody(["messages": [["role": "user", "content": "hi"]]],
+                                      model: "auto", function: "solo_work_remote")
+    try check(autoBody["function"] as? String == "inline_chat", "Auto must use the inline_chat scene")
+    try check(autoBody["model"] == nil, "Auto must not send a model name")
+    try check(autoBody["config_name"] == nil, "Auto must not send config_name")
+    try check(TraeAPI.isAuto("auto") && TraeAPI.isAuto(" AUTO ") && TraeAPI.isAuto(""), "Auto detection is case/whitespace sensitive")
+    try check(!TraeAPI.isAuto("gpt-6.1-sol"), "A named model must not be treated as Auto")
+
     let blank = TraeAPI.textBlocks(NSNull())
     try check(blank.count == 1 && blank[0]["text"] as? String == "", "Null content must become one empty text block")
     let imageOnly = TraeAPI.textBlocks([["type": "image_url", "url": "x"]])

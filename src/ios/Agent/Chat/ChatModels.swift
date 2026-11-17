@@ -65,7 +65,20 @@ final class ChatMessage: Identifiable, ObservableObject {
     /// Raw input attachments for preview before queue drain (cache URLs still valid).
     @Published var inputAttachments: [InputAttachment] = []
     /// True when all tool calls have completed and we're waiting for the model's next response.
-    @Published var isAwaitingModelResponse = false
+    @Published var isAwaitingModelResponse = false {
+        didSet {
+            if isAwaitingModelResponse && !oldValue {
+                modelWaitStartedAt = Date()
+                modelWaitPhase = "正在准备下一轮请求"
+            } else if !isAwaitingModelResponse {
+                modelWaitStartedAt = nil
+                modelWaitPhase = nil
+            }
+        }
+    }
+    /// Transient per-request progress; never encoded into conversation history.
+    @Published var modelWaitStartedAt: Date?
+    @Published var modelWaitPhase: String?
     /// True when this message is queued but not yet injected into the agent loop.
     @Published var isQueued = false
     /// True if this message is from the compacted history zone (read-only, no actions).

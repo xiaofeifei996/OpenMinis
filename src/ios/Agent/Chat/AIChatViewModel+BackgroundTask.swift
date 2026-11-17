@@ -629,6 +629,15 @@ extension AIChatViewModel {
             return
         }
 
+        let waitingMessage = messages.last(where: { $0.role == .assistant })
+        waitingMessage?.modelWaitStartedAt = Date()
+        waitingMessage?.modelWaitPhase = "已暂停 · 返回前台后继续"
+        defer {
+            if waitingMessage?.modelWaitPhase == "已暂停 · 返回前台后继续" {
+                waitingMessage?.modelWaitPhase = "正在准备下一轮请求"
+                waitingMessage?.modelWaitStartedAt = Date()
+            }
+        }
         logger.info("[Background] Agent loop suspended — waiting for foreground")
 
         // [ContinuationDiag] (#181) Parks until willEnterForeground. A known
@@ -695,6 +704,15 @@ extension AIChatViewModel {
     /// The loop suspends here until the user dismisses the browser sheet.
     func waitIfBrowserTakeover() async {
         guard browserTakeoverActive else { return }
+        let waitingMessage = messages.last(where: { $0.role == .assistant })
+        waitingMessage?.modelWaitStartedAt = Date()
+        waitingMessage?.modelWaitPhase = "已暂停 · 关闭浏览器接管后继续"
+        defer {
+            if waitingMessage?.modelWaitPhase == "已暂停 · 关闭浏览器接管后继续" {
+                waitingMessage?.modelWaitPhase = "正在准备下一轮请求"
+                waitingMessage?.modelWaitStartedAt = Date()
+            }
+        }
         logger.info("[Takeover] Agent loop pausing for browser takeover")
         // [ContinuationDiag] (#181) This continuation has no timeout — if it is
         // never resumed the agent loop parks here forever and the user sees a

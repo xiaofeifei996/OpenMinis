@@ -62,7 +62,9 @@ struct BridgedAssistantFooterV3: View {
                     if retryLog.isRetrying(key: retryLogKey) {
                         RetryMarkerButton { showRetryLog = true }
                     }
-                    TypingIndicator()
+                    TypingIndicator(startedAt: message.modelWaitStartedAt,
+                                    phase: message.modelWaitPhase,
+                                    retryCountdown: bridge.autoRetryCountdown)
                 }
             }
 

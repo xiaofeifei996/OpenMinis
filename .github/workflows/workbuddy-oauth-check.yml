@@ -39,6 +39,15 @@ jobs:
         run: |
           set -euo pipefail
           for file in \
+            src/ios/Agent/Chat/ChatModels.swift \
+            src/ios/Agent/Chat/AIChatViewModel+Fallback.swift \
+            src/ios/Agent/Chat/AIChatViewModel+SSEStream.swift \
+            src/ios/Agent/Chat/AIChatViewModel+BackgroundTask.swift \
+            src/ios/Providers/OpenAI/OpenAIAgentProvider.swift \
+            src/ios/Providers/Anthropic/AnthropicAgentProvider.swift \
+            src/ios/Views/Chat/AssistantBlockView.swift \
+            src/ios/Views/Chat/ChatMessageViews.swift \
+            src/ios/Agent/MessageList/CollectionViewMessageListV3/Cells/BridgedAssistantFooterV3.swift \
             src/ios/Providers/WorkBuddy/WorkBuddyChinaOAuthFlow.swift \
             src/ios/Providers/WorkBuddy/WorkBuddyChinaOAuthManager.swift \
             src/ios/Providers/Raccoon/RaccoonOAuthFlow.swift \
@@ -75,6 +84,12 @@ jobs:
         run: |
           swiftc -frontend -parse src/ios/MinisApp.swift
           python3 scripts/test_startup_migration.py
+
+      - name: Test model waiting and cancellation recovery
+        run: |
+          python3 scripts/test_model_wait.py
+          python3 scripts/test_wait_presentation.py
+          swift src/ios/MinisTests/Standalone/StreamStallWatchdogTests.swift
 
       - name: Validate Xcode project prerequisites
         shell: bash

@@ -408,7 +408,11 @@ final class AnthropicAgentProvider: AgentProvider {
                             }
 
                         case .messageStop:
-                            break
+                            // Final protocol event; usage and stop reason were
+                            // already emitted by messageDelta. Do not wait for
+                            // a proxy to close its HTTP connection.
+                            continuation.finish()
+                            return
                         }
                     }
                     continuation.finish()

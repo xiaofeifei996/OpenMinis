@@ -58,7 +58,12 @@ private final class StreamStallWatchdog: @unchecked Sendable {
     private var firedError: Error?
 
     /// The loop started awaiting the next event.
-    func beginWait(at date: Date) { lock.withLock { waitingSince = date } }
+    func beginWait(at date: Date) {
+        lock.withLock {
+            // Metadata-only events keep the original model-progress deadline.
+            if waitingSince == nil { waitingSince = date }
+        }
+    }
     /// An event arrived; processing it is not stall time.
     func endWait() { lock.withLock { waitingSince = nil } }
     /// When the current wait started, or nil while an event is being processed.
@@ -94,15 +99,22 @@ private final class StreamStallWatchdog: @unchecked Sendable {
         }
     }
 
-    /// Stall: resume the waiting side with `error`; any later wait throws it too.
-    func fire(_ error: Error) {
+    /// Reject a tick whose observed wait ended or advanced before it acquired
+    /// the lock. Diagnostics must run only AFTER this atomic decision.
+    @discardableResult
+    func fire(_ error: Error, ifWaitingSince expectedStart: Date) -> Bool {
         lock.lock()
+        guard waitingSince == expectedStart, firedError == nil else {
+            lock.unlock()
+            return false
+        }
         firedError = error
         let c = current?.continuation
         current?.continuation = nil
         current = nil
         lock.unlock()
         c?.resume(throwing: error)
+        return true
     }
 }
 
@@ -155,6 +167,19 @@ extension AIChatViewModel {
         case .reasoningEcho: return "reasoningEcho"
         case .streamActivity: return "streamActivity"
         case .done(let stop): return "done(\(stop))"
+        }
+    }
+
+    /// Billing/model labels do not prove model progress. Hidden reasoning
+    /// activity does, even when the UI has no visible thinking block.
+    nonisolated static func isModelProgress(_ event: AgentStreamEvent) -> Bool {
+        switch event {
+        case .usage, .responseModel: return false
+        case .textDelta(let text), .thinkingDelta(let text), .reasoningContent(let text):
+            return !text.isEmpty
+        case .toolInputDelta(_, let accumulated): return !accumulated.isEmpty
+        case .contentBlockStart, .toolCallComplete, .reasoningEcho, .streamActivity, .done:
+            return true
         }
     }
 
@@ -431,6 +456,7 @@ extension AIChatViewModel {
         let streamDiagModel = provider.model.id
         var lastEventAt = Date()
         var eventSeq = 0
+        var didPublishHiddenReasoningPhase = false
         logger.info("[StreamDiag] stream open session=\(streamDiagSession) provider=\(provider.name) model=\(streamDiagModel) at=\(Self.diagTimestamp(Date()))")
         // [T-crash-breadcrumbs] Request start/end, model name only. Once per
         // request - nothing per streamed event.
@@ -450,25 +476,34 @@ extension AIChatViewModel {
                 // Measured wait vs the nominal timeout: with a 1s tick a gap far
                 // above 120s means the tick was stretched (candidate 3); a gap
                 // close to 120s points at a genuinely silent stream (candidate 2).
+                guard stallWatchdog.fire(
+                    LLMError.transientError(message: "No response from the server for \(Int(stallTimeoutSeconds)) seconds — the stream stalled mid-generation"),
+                    ifWaitingSince: waitStart
+                ) else { continue }
                 let appState = await MainActor.run { Self.diagAppStateName() }
                 logger.error(
                     "[StreamDiag][STALL] watchdog fired session=\(streamDiagSession) provider=\(provider.name) model=\(streamDiagModel) "
                     + "nominal=\(Int(stallTimeoutSeconds))s measured=\(String(format: "%.1f", measured))s "
                     + "appState=\(appState) iterStart=\(Self.diagTimestamp(waitStart)) firedAt=\(Self.diagTimestamp(firedAt))"
                 )
-                // [T-ios-stream-stall-no-retry] An LLMError so the agent
-                // loop's retryable-error gate catches it — see the header
-                // comment at the top of this file.
-                stallWatchdog.fire(LLMError.transientError(message: "No response from the server for \(Int(stallTimeoutSeconds)) seconds — the stream stalled mid-generation"))
                 return
             }
         }
         defer { stallTick.cancel() }
         do {
         while true {
+            try Task.checkCancellation()
             stallWatchdog.beginWait(at: Date())
             let maybeEvent: AgentStreamEvent? = try await withThrowingTaskGroup(of: AgentStreamEvent?.self) { group in
-                group.addTask { try await iterBox.next() }
+                group.addTask {
+                    let event = try await iterBox.next()
+                    // Clear before returning to the racing parent, not after a
+                    // scheduling/actor hop that could let a stale tick fire.
+                    if event.map({ Self.isModelProgress($0) }) ?? true {
+                        stallWatchdog.endWait()
+                    }
+                    return event
+                }
                 group.addTask {
                     // No timer here: suspends until the watchdog fires (throws)
                     // or the event above wins and cancelAll() releases it.
@@ -479,7 +514,6 @@ extension AIChatViewModel {
                 group.cancelAll()
                 return result
             }
-            stallWatchdog.endWait()
             guard let event = maybeEvent else { break }
             try Task.checkCancellation()
             // [StreamDiag] Per-event timeline. Throttled: the first 5 events of
@@ -1076,9 +1110,16 @@ extension AIChatViewModel {
                 #endif
 
             case .streamActivity:
-                // [T-sse-idle-timeout] Nothing to show or store: arriving here
-                // already reset the stall watchdog, which is all it is for.
-                break
+                // Real hidden reasoning has already refreshed the watchdog.
+                // Publish the distinction from silence once, never per token.
+                if !didPublishHiddenReasoningPhase {
+                    didPublishHiddenReasoningPhase = true
+                    await MainActor.run {
+                        guard msgIdx < messages.count,
+                              messages[msgIdx].isAwaitingModelResponse else { return }
+                        messages[msgIdx].modelWaitPhase = "模型正在思考"
+                    }
+                }
 
             case .responseModel(let reported):
                 // [T-agent-model-identity] The API named the model that is

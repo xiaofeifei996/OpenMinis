@@ -1092,6 +1092,12 @@ final class OpenAIAgentProvider: AgentProvider {
                                 reason = .endTurn
                             }
                             continuation.yield(.done(stopReason: reason))
+                            // response.completed already contains final usage,
+                            // reasoning and tool arguments. Some proxies keep
+                            // the socket open afterwards; waiting for EOF would
+                            // turn a completed response into an idle timeout.
+                            continuation.finish()
+                            return
 
                         default:
                             break

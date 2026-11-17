@@ -102,11 +102,13 @@ func valueWithTimeout(_ seconds: Double, _ op: @escaping @Sendable () async -> S
 
         // [3] fire throws into the waiter, then into later waits
         let w3 = StreamStallWatchdog()
+        let start3 = Date()
+        w3.beginWait(at: start3)
         let t3 = Task { () -> String in
             do { try await w3.wait(); return "returned" } catch is Stall { return "threw" } catch { return "other" }
         }
         try? await Task.sleep(nanoseconds: 50_000_000)
-        w3.fire(Stall())
+        _ = w3.fire(Stall(), ifWaitingSince: start3)
         let r3 = await valueWithTimeout(2) { await t3.value }
         print("FIRE=\(r3)")
         let r3b = await withTimeout(2) { try await w3.wait(); return 0 }
@@ -171,7 +173,7 @@ check("one tick task per stream, cancelled when processing ends",
 check("the loop marks waiting around each next()",
       loop.contains("stallWatchdog.beginWait(at: Date())") && loop.contains("stallWatchdog.endWait()"))
 check("the stall still surfaces as the retryable LLMError",
-      src.contains("stallWatchdog.fire(LLMError.transientError(message: \"No response from the server for"))
+      src.contains("guard stallWatchdog.fire(") && src.contains("LLMError.transientError(message: \"No response from the server for"))
 
 print("")
 print(failures == 0 ? "✅ ALL PASSED" : "❌ \(failures) FAILURE(S)")

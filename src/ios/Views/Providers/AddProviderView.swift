@@ -179,6 +179,7 @@ struct AddProviderView: View {
     @State private var showKimiLogin = false
     /// [T-copilot-provider] Same device-code shape as Kimi's.
     @State private var showCopilotLogin = false
+    @State private var showAutoClawLogin = false
     @State private var oauthAuthTime: Date?
     @State private var showDataSharingConsent = false
     @State private var showImportFile = false
@@ -348,6 +349,17 @@ struct AddProviderView: View {
                 if success {
                     oauthAuthTime = Date()
                     oauthMaskedToken = loadMaskedToken(type: .kimiCode)
+                    pendingOAuthDone = true
+                }
+            }
+        }
+        .sheet(isPresented: $showAutoClawLogin) {
+            // 手机验证码登录。成功时与 startOAuth() 的收尾保持一致：标记 OAuth
+            // 完成并显示掩码 token，之后由 saveOAuthInstance() 落实例。
+            AutoClawLoginSheet(instanceId: pendingInstanceId) { success in
+                if success {
+                    oauthAuthTime = Date()
+                    oauthMaskedToken = loadMaskedToken(type: .autoClaw)
                     pendingOAuthDone = true
                 }
             }
@@ -876,6 +888,8 @@ struct AddProviderView: View {
                         showKimiLogin = true
                     } else if selectedType == .githubCopilot {
                         showCopilotLogin = true
+                    } else if selectedType == .autoClaw {
+                        showAutoClawLogin = true
                     } else {
                         Task { await startOAuth() }
                     }
@@ -992,6 +1006,12 @@ struct AddProviderView: View {
         case .xAI: return "https://api.x.ai/v1"
         case .kimiCode: return "https://api.kimi.com/coding"
         case .githubCopilot: return CopilotConstants.apiBaseURL
+        case .workBuddyChina: return "https://copilot.tencent.com/v2"
+        case .workBuddyAI: return "https://www.workbuddy.ai/v2"
+        case .raccoon: return RaccoonOAuthFlow.llmBase
+        case .autoClaw: return AutoClawAPI.defaultBase
+        case .trae: return TraeAPI.Site.china.apiOrigin
+        case .traeInternational: return TraeAPI.Site.international.apiOrigin
         default: return "https://api.example.com"
         }
     }
@@ -1080,6 +1100,121 @@ struct AddProviderView: View {
             // [T-copilot-provider] Same shape — the device flow lives in
             // CopilotDeviceLoginSheet so the risk notice is shown before it starts.
             case .githubCopilot: break
+            case .raccoon:
+                // Browser sign-in → authorization code → tokens. The manager
+                // persists the credential under the same Keychain accounts the
+                // request path and the model catalog read.
+                try await RaccoonOAuthManager.shared.login(instanceId: pendingInstanceId)
+            case .autoClaw:
+                // The phone + SMS flow needs input, so it runs in
+                // AutoClawLoginSheet rather than inline here.
+                break
+            case .trae:
+                // Browser sign-in: the sheet presents a Safari page and the
+                // loopback server in TraeSignIn answers it.
+                try await TraeAccountManager.shared.signIn(instanceId: pendingInstanceId)
+            case .traeInternational:
+                try await TraeAccountManager.shared.signIn(instanceId: pendingInstanceId, site: .international)
+            case .workBuddyAI:
+                // Same plugin login, different platform query. The sheet and
+                // the account poll are identical, so only the region differs.
+                let login = try await WorkBuddyChinaOAuthFlow.begin(region: .international)
+                await WorkBuddyChinaOAuthFlow.openAuthorizationPage(login)
+                let token = try await WorkBuddyChinaOAuthFlow.pollToken(for: login, region: .international)
+                let account = try await WorkBuddyChinaOAuthFlow.pollAccount(
+                    for: login,
+                    accessToken: token.accessToken,
+                    domain: token.domain,
+                    region: .international
+                )
+                ProviderKeychainHelper.saveOAuthString(
+                    token.accessToken,
+                    instanceId: pendingInstanceId,
+                    account: "manual-oauth-token"
+                )
+                let accessExpiry = token.expiresAt.map { Date(timeIntervalSince1970: $0) }
+                    ?? Date().addingTimeInterval(TimeInterval(token.expiresIn ?? 3600))
+                ProviderKeychainHelper.saveOAuthString(
+                    String(accessExpiry.timeIntervalSince1970),
+                    instanceId: pendingInstanceId,
+                    account: "workbuddy-access-expiry"
+                )
+                ProviderKeychainHelper.saveOAuthString(
+                    account.userID,
+                    instanceId: pendingInstanceId,
+                    account: "workbuddy-user-id"
+                )
+                ProviderKeychainHelper.saveOAuthString(
+                    account.domain ?? token.domain ?? "www.workbuddy.ai",
+                    instanceId: pendingInstanceId,
+                    account: "workbuddy-domain"
+                )
+                if let refresh = token.refreshToken, !refresh.isEmpty {
+                    ProviderKeychainHelper.saveOAuthString(
+                        refresh,
+                        instanceId: pendingInstanceId,
+                        account: "workbuddy-refresh-token"
+                    )
+                }
+            case .workBuddyChina:
+                let login = try await WorkBuddyChinaOAuthFlow.begin()
+                await WorkBuddyChinaOAuthFlow.openAuthorizationPage(login)
+                let token = try await WorkBuddyChinaOAuthFlow.pollToken(for: login)
+                let account = try await WorkBuddyChinaOAuthFlow.pollAccount(
+                    for: login,
+                    accessToken: token.accessToken,
+                    domain: token.domain
+                )
+                ProviderKeychainHelper.saveOAuthString(
+                    token.accessToken,
+                    instanceId: pendingInstanceId,
+                    account: "manual-oauth-token"
+                )
+                let accessExpiry = token.expiresAt.map { Date(timeIntervalSince1970: $0) }
+                    ?? Date().addingTimeInterval(TimeInterval(token.expiresIn ?? 3600))
+                ProviderKeychainHelper.saveOAuthString(
+                    String(accessExpiry.timeIntervalSince1970),
+                    instanceId: pendingInstanceId,
+                    account: "workbuddy-access-expiry"
+                )
+                if let absoluteRefreshExpiry = token.refreshExpiresAt {
+                    ProviderKeychainHelper.saveOAuthString(
+                        String(absoluteRefreshExpiry),
+                        instanceId: pendingInstanceId,
+                        account: "workbuddy-refresh-expiry"
+                    )
+                } else if let refreshExpirySeconds = token.refreshExpiresIn {
+                    let refreshExpiry = Date().addingTimeInterval(TimeInterval(refreshExpirySeconds))
+                    ProviderKeychainHelper.saveOAuthString(
+                        String(refreshExpiry.timeIntervalSince1970),
+                        instanceId: pendingInstanceId,
+                        account: "workbuddy-refresh-expiry"
+                    )
+                }
+                ProviderKeychainHelper.saveOAuthString(
+                    account.userID,
+                    instanceId: pendingInstanceId,
+                    account: "workbuddy-user-id"
+                )
+                ProviderKeychainHelper.saveOAuthString(
+                    account.domain ?? token.domain ?? "copilot.tencent.com",
+                    instanceId: pendingInstanceId,
+                    account: "workbuddy-domain"
+                )
+                if let enterpriseID = account.enterpriseID, !enterpriseID.isEmpty {
+                    ProviderKeychainHelper.saveOAuthString(
+                        enterpriseID,
+                        instanceId: pendingInstanceId,
+                        account: "workbuddy-enterprise-id"
+                    )
+                }
+                if let refresh = token.refreshToken, !refresh.isEmpty {
+                    ProviderKeychainHelper.saveOAuthString(
+                        refresh,
+                        instanceId: pendingInstanceId,
+                        account: "workbuddy-refresh-token"
+                    )
+                }
             case .unsupported: break // free / unsupported — no OAuth
             }
             oauthAuthTime = Date()
@@ -1111,6 +1246,17 @@ struct AddProviderView: View {
             token = ProviderKeychainHelper.loadOAuthToken(instanceId: pendingInstanceId, as: XAITokenStorage.self)?.accessToken
         case .kimiCode:
             token = ProviderKeychainHelper.loadOAuthToken(instanceId: pendingInstanceId, as: KimiTokenStorage.self)?.accessToken
+        case .workBuddyChina, .workBuddyAI:
+            token = ProviderKeychainHelper.loadOAuthString(instanceId: pendingInstanceId, account: "manual-oauth-token")
+        case .raccoon:
+            token = ProviderKeychainHelper.loadOAuthString(
+                instanceId: pendingInstanceId, account: RaccoonKeychain.access)
+        case .autoClaw:
+            token = ProviderKeychainHelper.loadOAuthString(
+                instanceId: pendingInstanceId, account: AutoClawKeychain.access)
+        case .trae, .traeInternational:
+            token = ProviderKeychainHelper.loadOAuthString(
+                instanceId: pendingInstanceId, account: TraeKeychain.access)
         case .githubCopilot:
             // The GitHub token is the credential worth showing; the session
             // token is derived and rotates every ~25 minutes.
@@ -1146,6 +1292,25 @@ struct AddProviderView: View {
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "oauth-email")
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "oauth-gcp-project")
                 ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "manual-oauth-token")
+                ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-user-id")
+                ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-domain")
+                ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-refresh-token")
+                ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-access-expiry")
+                ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-refresh-expiry")
+                ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: "workbuddy-enterprise-id")
+                for account in [RaccoonKeychain.access, RaccoonKeychain.refresh,
+                                RaccoonKeychain.expiry, RaccoonKeychain.userID] {
+                    ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: account)
+                }
+                for account in [AutoClawKeychain.access, AutoClawKeychain.refresh,
+                                AutoClawKeychain.expiry, AutoClawKeychain.phone] {
+                    ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: account)
+                }
+                for account in [TraeKeychain.access, TraeKeychain.refresh, TraeKeychain.expiry,
+                                TraeKeychain.userID, TraeKeychain.machineID, TraeKeychain.deviceID,
+                                TraeKeychain.gate, TraeKeychain.site, TraeKeychain.apiOrigin] {
+                    ProviderKeychainHelper.deleteOAuthString(instanceId: pendingInstanceId, account: account)
+                }
                 // OpenRouter OAuth stores a permanent API key, not an OAuth token
                 if selectedType == .openRouter {
                     ProviderKeychainHelper.deleteAPIKey(instanceId: pendingInstanceId)
@@ -1195,6 +1360,12 @@ struct AddProviderView: View {
         case .xAI: return AppLocalized("Sign in with xAI")
         case .kimiCode: return AppLocalized("Sign in with Kimi Code")
         case .githubCopilot: return AppLocalized("Sign in with GitHub")
+        case .workBuddyChina: return "使用WorkBuddy 登录"
+        case .workBuddyAI: return "使用 WorkBuddy AI 登录"
+        case .raccoon: return "使用小浣熊账号登录"
+        case .autoClaw: return "使用智谱账号登录"
+        case .trae: return "使用 Trae 账号登录"
+        case .traeInternational: return "使用 Trae 国际版账号登录"
         case .unsupported: return AppLocalized("Sign In")
         }
     }
@@ -1211,6 +1382,11 @@ struct AddProviderView: View {
         case .xAI: return "xai-..."
         case .kimiCode: return "" // OAuth only
         case .githubCopilot: return "" // OAuth only
+        case .workBuddyChina: return "WorkBuddy access token"
+        case .workBuddyAI: return "WorkBuddy AI access token"
+        case .raccoon: return "xiaohuanxiong.com access token"
+        case .autoClaw: return "AutoClaw access token"
+        case .trae, .traeInternational: return ""
         case .unsupported: return ""
         }
     }
@@ -1226,6 +1402,12 @@ struct AddProviderView: View {
         case .xAI: return "xAI (Grok)"
         case .kimiCode: return "Kimi Code"
         case .githubCopilot: return "GitHub Copilot"
+        case .workBuddyChina: return "WorkBuddy 中国版"
+        case .workBuddyAI: return "WorkBuddy AI（国际版）"
+        case .raccoon: return "小浣熊（商汤）"
+        case .autoClaw: return "AutoClaw（智谱 AutoGLM）"
+        case .trae: return "Trae（字节跳动）"
+        case .traeInternational: return "Trae 国际版"
         case .unsupported: return AppLocalized("Unsupported")
         }
     }
@@ -1256,6 +1438,21 @@ struct AddProviderView: View {
         // path and fails with no explanation.
         case .githubCopilot:
             return [.oauth]
+        case .workBuddyChina, .workBuddyAI:
+            return [.oauth]
+        case .raccoon:
+            // The supported path is the account sign-in; the "Or Configure
+            // Manually" block still accepts a bearer token copied out of the
+            // vendor's own web client, which the factory honours first.
+            return [.oauth]
+        case .autoClaw:
+            // Same shape: SMS sign-in, or a token pasted into the manual block
+            // (the only path that works for the international host, whose
+            // sign-in needs a captcha this app cannot render).
+            return [.oauth]
+        case .trae, .traeInternational:
+            // Browser sign-in, plus the same manual escape hatch.
+            return [.oauth]
         case .openAIResponses, .gemini:
             return [.apiKey]
         default:
@@ -1269,6 +1466,22 @@ struct AddProviderView: View {
             return AppLocalized("Supports OpenAI official API and third-party services like OpenRouter, MiniMax, etc.")
         case (.openAIResponses, .apiKey):
             return AppLocalized("Use an API key for a Responses API endpoint")
+        case (.raccoon, .oauth):
+            return "使用小浣熊（商汤）账号登录。非官方接口，可能随时变更；请遵守上游条款，勿用于批量或商业用途。"
+        case (.raccoon, .apiKey):
+            return "粘贴 xiaohuanxiong.com 网页端请求头里的 Bearer token。"
+        case (.autoClaw, .oauth):
+            return "使用智谱账号手机验证码登录（国内版）。这是非官方接口，可能随时变更；请遵守上游条款。"
+        case (.autoClaw, .apiKey):
+            return "粘贴 AutoClaw 客户端的 access token；国际版请同时填写 Base URL（https://autoglm-api.autoglm.ai）。"
+        case (.trae, .oauth):
+            return "使用 Trae 账号在应用内浏览器登录（自动识别国内版/国际版）。非官方接口，请遵守上游条款。"
+        case (.traeInternational, .oauth):
+            return "使用 Trae 国际版账号在应用内浏览器登录（国际版站点）。非官方接口，请遵守上游条款。"
+        case (.trae, .apiKey):
+            return "粘贴 Trae 客户端的 Cloud-IDE-JWT。"
+        case (.traeInternational, .apiKey):
+            return "粘贴 Trae 国际版客户端的 Cloud-IDE-JWT。"
         case (_, .apiKey):
             return AppLocalized("Use an API key from your \(type.displayName) account")
         case (.anthropic, .oauth):
@@ -1289,6 +1502,12 @@ struct AddProviderView: View {
             return AppLocalized("Sign in with your Kimi Code / Coding Plan subscription.")
         case (.kimiCode, .apiKey):
             return AppLocalized("Use a Kimi Coding API key.")
+        case (.workBuddyChina, .oauth):
+            return "打开WorkBuddy 登录"
+        case (.workBuddyAI, .oauth):
+            return "打开 WorkBuddy AI 登录（国际版，需对应区域账号）"
+        case (.workBuddyChina, .apiKey):
+            return AppLocalized("WorkBuddy China requires an account access token and account headers.")
         case (.githubCopilot, _):
             // [T-copilot-provider] The risk warning belongs where the user
             // decides, not only inside the sign-in sheet.
@@ -1325,6 +1544,21 @@ struct AddProviderView: View {
         case .kimiCode:
             Image(systemName: "moon.stars")
                 .foregroundStyle(.indigo)
+        case .workBuddyChina:
+            Image(systemName: "bubble.left.and.bubble.right")
+                .foregroundStyle(.blue)
+        case .workBuddyAI:
+            Image(systemName: "bubble.left.and.bubble.right.fill")
+                .foregroundStyle(.teal)
+        case .raccoon:
+            Image(systemName: "pawprint.fill")
+                .foregroundStyle(.orange)
+        case .autoClaw:
+            Image(systemName: "wand.and.stars")
+                .foregroundStyle(.teal)
+        case .trae, .traeInternational:
+            Image(systemName: "chevron.left.forwardslash.chevron.right")
+                .foregroundStyle(.indigo)
         case .githubCopilot:
             Image(systemName: "chevron.left.forwardslash.chevron.right")
                 .foregroundStyle(.primary)
@@ -1345,6 +1579,11 @@ struct AddProviderView: View {
         case .xAI: return .gray
         case .kimiCode: return .indigo
         case .githubCopilot: return .primary
+        case .workBuddyChina: return .blue
+        case .workBuddyAI: return .teal
+        case .raccoon: return .orange
+        case .autoClaw: return .teal
+        case .trae, .traeInternational: return .indigo
         case .unsupported: return .gray
         }
     }

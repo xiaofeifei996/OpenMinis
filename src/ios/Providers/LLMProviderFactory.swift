@@ -1,4 +1,6 @@
 import Foundation
+import CryptoKit
+import Security
 
 /// Shared factory for creating LLMProvider instances from a ModelEntry.
 /// Used by both the agent loop (AIChatViewModel) and minis-model-use offload bridge.
@@ -78,9 +80,38 @@ enum LLMProviderFactory {
             return openCode(makeKimiProvider(instance: instance, model: entry.model))
         case .githubCopilot:
             return openCode(makeCopilotProvider(instance: instance, model: entry.model))
+        case .workBuddyChina:
+            return openCode(makeWorkBuddyChinaProvider(instance: instance, model: entry.model))
+        case .workBuddyAI:
+            return openCode(makeWorkBuddyAIProvider(instance: instance, model: entry.model))
+        case .raccoon:
+            return openCode(makeRaccoonProvider(instance: instance, model: entry.model))
+        case .autoClaw:
+            return openCode(makeAutoClawProvider(instance: instance, model: entry.model))
+        case .trae, .traeInternational:
+            return openCode(makeTraeProvider(instance: instance, model: entry.model))
         case .unsupported:
             throw FactoryError.voiceOnlyProvider
         }
+    }
+
+    /// 32 lowercase hex characters, fresh each call.
+    /// `nonisolated`: the per-request header closure that calls it is
+    /// `@Sendable` and runs off the main actor.
+    nonisolated static func randomHex(_ bytes: Int) -> String {
+        var data = Data(count: bytes)
+        _ = data.withUnsafeMutableBytes { buffer in
+            SecRandomCopyBytes(kSecRandomDefault, bytes, buffer.baseAddress!)
+        }
+        return data.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Stable hex derived from the account, used for the virtual device ids the
+    /// client reports. Stable across restarts and distinct per account is the
+    /// property that matters: a drifting id is what gets a request flagged.
+    nonisolated static func stableHex(purpose: String, account: String, length: Int) -> String {
+        let digest = SHA256.hash(data: Data("agenthub:\(purpose):\(account)".utf8))
+        return String(digest.map { String(format: "%02x", $0) }.joined().prefix(length))
     }
 
     /// Inject the instance's custom `User-Agent` into an OpenAI-family provider's
@@ -362,6 +393,322 @@ enum LLMProviderFactory {
     /// body, which is the first point that knows whether this turn is
     /// agent-driven and whether images are attached. Before this, the per-request
     /// headers were computed by a function nothing called, so they never shipped.
+    /// Tencent WorkBuddy China uses an OpenAI-compatible streaming endpoint.
+    /// The endpoint already contains /v2, so /v1 must not be appended.
+    /// OAuth login and account-bound headers are handled separately; this
+    /// builder also honors a manually supplied bearer token for testing.
+    static func makeWorkBuddyChinaProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
+        makeWorkBuddyProvider(instance: instance, model: model, region: .china)
+    }
+
+    /// WorkBuddy AI, the international build. Shares every line of the China
+    /// builder except the facts in `WorkBuddyRegion`.
+    static func makeWorkBuddyAIProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
+        makeWorkBuddyProvider(instance: instance, model: model, region: .international)
+    }
+
+    static func makeWorkBuddyProvider(
+        instance: ProviderInstance,
+        model: LLMModel,
+        region: WorkBuddyRegion
+    ) -> OpenAIProvider {
+        let instanceId = instance.id
+        let provider: OpenAIProvider
+        if instance.credentialType == .oauth {
+            provider = OpenAIProvider(
+                oauthTokenProvider: {
+                    try await WorkBuddyChinaOAuthManager.shared.validAccessToken(instanceId: instanceId)
+                },
+                model: model
+            )
+        } else {
+            let token = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) ?? ""
+            provider = OpenAIProvider(
+                apiKey: token,
+                model: model,
+                customBaseURL: instance.effectiveCustomBaseURL ?? region.chatBase,
+                appendV1Suffix: false
+            )
+        }
+        provider.customBaseURL = instance.effectiveCustomBaseURL ?? region.chatBase
+        provider.appendV1Suffix = false
+        provider.extraHeaders.merge([
+            "User-Agent": region.userAgent,
+            "X-Product": "SaaS",
+            "X-IDE-Type": region.ideName,
+            "X-IDE-Name": region.ideName,
+            "X-IDE-Version": region.clientVersion,
+            "X-Requested-With": "XMLHttpRequest",
+            "X-Agent-Intent": "craft",
+            "X-Agent-Purpose": "conversation",
+            "Accept-Language": region.acceptLanguage,
+        ]) { _, new in new }
+        if region == .international {
+            // The international gateway runs a channel-verification pass that
+            // the China build does not: a request without the desktop
+            // client's full fingerprint is rejected with `400 code 11128`
+            // "request illegal — this call failed channel verification".
+            // The set below is the one AgentHub sends (its workbuddy_ai
+            // channel), read off a capture of the official client.
+            let uid = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id, account: "workbuddy-user-id") ?? ""
+            provider.extraHeaders.merge([
+                "accept": "application/json, text/event-stream",
+                "origin": region.pluginHost,
+                "referer": region.pluginHost + "/",
+                "x-codebuddy-request": "1",
+                // Per-account virtual device: stable across restarts and
+                // different between accounts, which is what the client has.
+                "x-machine-id": Self.stableHex(purpose: "machine", account: uid, length: 36),
+                "x-session-id": Self.stableHex(purpose: "session", account: uid, length: 36),
+                "x-no-enterprise-id": "1",
+                "x-domain": region.domain,
+            ]) { _, new in new }
+        }
+        if region.requiresLeadingSystemMessage {
+            // The international build answers 400 code 11128 ("first message
+            // is not system prompt") to a conversation that does not open with
+            // one, so a minimal one is inserted when the turn has none.
+            let placeholder = "You are a helpful assistant."
+            provider.bodyTransform = { body in
+                var out = body
+                if var messages = out["messages"] as? [[String: Any]] {
+                    let first = messages.first?["role"] as? String
+                    if first != "system" && first != "developer" {
+                        messages.insert(["role": "system", "content": placeholder], at: 0)
+                        out["messages"] = messages
+                    }
+                }
+                // The official CLI always asks for usage in the last frame.
+                if out["stream_options"] == nil {
+                    out["stream_options"] = ["include_usage": true]
+                }
+                // `max_completion_tokens` is not understood upstream; the
+                // official client translates it before sending.
+                if let mct = out["max_completion_tokens"] as? Int, mct > 0,
+                   out["max_tokens"] == nil {
+                    out["max_tokens"] = mct
+                }
+                out.removeValue(forKey: "max_completion_tokens")
+                return out
+            }
+        }
+        // WorkBuddy's gateway expects request identifiers in the desktop client's
+        // chat headers. This provider hook runs for each outbound request.
+        if region == .international {
+            // The full B3 conversation group. The gateway aggregates a turn by
+            // x-conversation-request-id, and B3 only accepts a 16/32-hex
+            // trace id — the names are lowercase here because that is how the
+            // captured client sends them.
+            provider.perRequestHeaders = { _ in
+                let conversationID = Self.randomHex(16)
+                let messageID = Self.randomHex(16)
+                return [
+                    "x-conversation-request-id": conversationID,
+                    "x-conversation-message-id": messageID,
+                    "x-request-id": messageID,
+                    "x-root-request-id": conversationID,
+                    "x-trace-id": conversationID,
+                    "x-b3-traceid": conversationID,
+                    "x-b3-spanid": String(messageID.prefix(16)),
+                    "x-b3-sampled": "1",
+                ]
+            }
+        } else {
+            provider.perRequestHeaders = { _ in
+                let requestID = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+                return [
+                    "X-Conversation-Message-ID": requestID,
+                    "X-Request-ID": requestID,
+                    "X-Conversation-Request-ID": UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+                ]
+            }
+        }
+        if instance.credentialType == .oauth {
+            if let userID = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id, account: "workbuddy-user-id"
+            ), !userID.isEmpty {
+                provider.extraHeaders[region == .international ? "x-user-id" : "X-User-Id"] = userID
+            }
+            // The international build already carries `x-domain` in its
+            // fingerprint block above; setting a second, differently-cased
+            // copy would send the header twice.
+            if region == .china,
+               let domain = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id, account: "workbuddy-domain"
+            ), !domain.isEmpty {
+                provider.extraHeaders["X-Domain"] = domain
+            }
+            if let enterpriseID = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id, account: "workbuddy-enterprise-id"
+            ), !enterpriseID.isEmpty {
+                provider.extraHeaders["X-Enterprise-Id"] = enterpriseID
+                provider.extraHeaders["X-Tenant-Id"] = enterpriseID
+            }
+        }
+        return provider
+    }
+
+    /// SenseTime Raccoon (小浣熊) — OpenAI-compatible Chat Completions at
+    /// `https://xiaohuanxiong.com/api/web/llm/v2/chat/completions`.
+    ///
+    /// The upstream base already ends in `/v2`, so `/v1` must NOT be appended.
+    /// A manually pasted bearer token (the vendor's own web client shows one)
+    /// wins over the managed OAuth session, mirroring the other OpenAI-family
+    /// builders — that is what lets a user try the provider without the
+    /// browser flow.
+    static func makeRaccoonProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
+        let iid = instance.id
+        let base = instance.effectiveCustomBaseURL ?? RaccoonOAuthFlow.llmBase
+        let provider: OpenAIProvider
+        if let manual = ProviderKeychainHelper.loadOAuthString(
+            instanceId: iid, account: "manual-oauth-token"
+        ), !manual.isEmpty {
+            provider = OpenAIProvider(
+                apiKey: manual, model: model, customBaseURL: base, appendV1Suffix: false)
+        } else {
+            provider = OpenAIProvider(
+                oauthTokenProvider: { try await RaccoonOAuthManager.shared.validAccessToken(instanceId: iid) },
+                model: model
+            )
+            // The OAuth branch of the initializer leaves these at their defaults
+            // (no base, /v1 appended) which would target api.openai.com.
+            provider.customBaseURL = base
+            provider.appendV1Suffix = false
+        }
+        // The gateway distinguishes the desktop client from the website on
+        // these headers; without them it answers as a browser session.
+        provider.extraHeaders.merge([
+            "User-Agent": RaccoonOAuthFlow.userAgent,
+            "Accept": "*/*",
+        ]) { _, new in new }
+        return provider
+    }
+
+    /// AutoClaw (智谱 AutoGLM 桌面端) — OpenAI-compatible Chat Completions at
+    /// `{root}/autoclaw-proxy/proxy/autoclaw/chat/completions`.
+    ///
+    /// Three facts differ from a normal OpenAI-compatible provider, and all of
+    /// them are gateway-side validation rather than features:
+    ///   * the bearer rides in `X-Authorization`;
+    ///   * `X-Request-Model` carries the FULL route id (which is the model id
+    ///     here), while `body.model` must be the same id with the route prefix
+    ///     stripped — one of them wrong means the wrong billing channel or an
+    ///     unknown model;
+    ///   * `max_tokens` below 10000 and a system prompt without the client
+    ///     identity line each answer a bodyless `406`, so the body is
+    ///     normalised through `AutoClawAPI.normalizeBody`.
+    static func makeAutoClawProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
+        let iid = instance.id
+        let base = AutoClawAPI.llmBase(root: instance.effectiveCustomBaseURL)
+        let provider: OpenAIProvider
+        if let manual = ProviderKeychainHelper.loadOAuthString(
+            instanceId: iid, account: "manual-oauth-token"
+        ), !manual.isEmpty {
+            provider = OpenAIProvider(
+                apiKey: manual, model: model, customBaseURL: base, appendV1Suffix: false)
+        } else {
+            provider = OpenAIProvider(
+                oauthTokenProvider: { try await AutoClawAccountManager.shared.validAccessToken(instanceId: iid) },
+                model: model
+            )
+            // The OAuth initializer leaves these at their defaults (no base,
+            // /v1 appended), which would target api.openai.com.
+            provider.customBaseURL = base
+            provider.appendV1Suffix = false
+        }
+        provider.authHeaderName = "X-Authorization"
+        provider.extraHeaders.merge([
+            "User-Agent": AutoClawAPI.userAgent,
+            "accept": "*/*",
+            // x-tm must never be "linux" on this domain.
+            "x-tm": "win",
+            "x-product": "autoclaw",
+            "x-client-type": "pc",
+            "x-version": AutoClawAPI.clientVersion,
+            "x-lang": "zh-CN",
+            "x-channel": "official",
+            "x_trace_id": "autoclaw-desktop",
+            "x-request-model": model.id,
+        ]) { _, new in new }
+        provider.perRequestHeaders = { _ in
+            ["x-request-id": UUID().uuidString.lowercased()]
+        }
+        provider.bodyTransform = { AutoClawAPI.normalizeBody($0) }
+        return provider
+    }
+
+    /// Trae (字节跳动 IDE).
+    ///
+    /// Four things differ from a normal OpenAI-compatible provider, and all are
+    /// gateway validation rather than features:
+    ///
+    ///   * the credential rides in THREE headers, prefixed `Cloud-IDE-JWT `;
+    ///   * `body.model` and `body.config_name` must both name the model, and the
+    ///     `function` field picks the roster that may call it;
+    ///   * message content is a text-block array and tool `parameters` a JSON
+    ///     string (handled in `TraeAPI.mendedBody`);
+    ///   * the response is `event: output/token_usage/done`, not chunks, so a
+    ///     translator rewrites each frame before the usual parser sees it.
+    static func makeTraeProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
+        let iid = instance.id
+        // The two builds have different chat hosts, and the sign-in records
+        // which one this account belongs to.
+        let origin = TraeAccountManager.resolvedOrigin(instance: instance)
+        let expectedSite: TraeAPI.Site? = instance.providerType == .traeInternational ? .international : nil
+        let provider: OpenAIProvider
+        if let manual = ProviderKeychainHelper.loadOAuthString(
+            instanceId: iid, account: "manual-oauth-token"
+        ), !manual.isEmpty {
+            provider = OpenAIProvider(
+                apiKey: manual, model: model, customBaseURL: origin, appendV1Suffix: false)
+        } else {
+            provider = OpenAIProvider(
+                oauthTokenProvider: { try await TraeAccountManager.shared.validAccessToken(instanceId: iid, expectedSite: expectedSite) },
+                model: model
+            )
+            // The OAuth initializer leaves these at their defaults (no base URL,
+            // /v1 appended), which would target api.openai.com.
+            provider.customBaseURL = origin
+            provider.appendV1Suffix = false
+            // A stale access token gets exactly one renewal attempt; manual
+            // pasted tokens intentionally do not install this hook.
+            provider.oauthRefreshOnUnauthorized = {
+                _ = try await TraeAccountManager.shared.validAccessToken(
+                    instanceId: iid, expectedSite: expectedSite, forceRefresh: true)
+            }
+        }
+        provider.authHeaderName = "Authorization"
+        provider.authHeaderPrefix = "Cloud-IDE-JWT "
+        provider.absoluteEndpointOverride = TraeAPI.chatPath
+        let functions = TraeAPI.ModelFunctions()
+        provider.extraHeaders.merge(TraeAPI.clientHeaders()) { _, new in new }
+        provider.extraHeaders["Accept"] = "text/event-stream"
+        provider.extraAuthHeaders = { token in
+            let ids = TraeAccountManager.extraHeaderValues(instanceId: iid)
+            var headers = TraeAPI.accountHeaders(
+                token: token,
+                userID: ids.userID,
+                machineID: ids.machineID,
+                deviceID: ids.deviceID
+            )
+            let identity = origin + ":" + TraeAPI.derivedMachineID(token)
+            if functions.needsDirectory(identity: identity) {
+                let directoryHeaders = TraeAPI.clientHeaders().merging(headers) { _, new in new }
+                let entries = await TraeAPI.roster(origin: origin, headers: directoryHeaders)
+                try Task.checkCancellation()
+                functions.store(entries, identity: identity)
+            }
+            headers.removeValue(forKey: "Authorization")
+            return headers
+        }
+        provider.bodyTransform = { body in
+            TraeAPI.mendedBody(body, model: model.id, function: functions.function(for: model.id))
+        }
+        provider.streamTranslator = TraeDialect()
+        return provider
+    }
+
     static func makeCopilotProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {
         let iid = instance.id
         let provider = OpenAIProvider(

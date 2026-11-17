@@ -3289,6 +3289,126 @@ final class ProviderConfigStore: ObservableObject {
             let kimiBase = customBase ?? "https://api.kimi.com/coding"
             let kimiAppendV1 = customBase == nil ? true : appendV1  // default base …/coding needs /v1 appended
             return try await OpenAIModelsAPI.fetchModels(apiKey: token, baseURL: kimiBase, appendV1Suffix: kimiAppendV1, forceRefresh: forceRefresh, userAgent: nil)
+        case (.workBuddyChina, .apiKey), (.workBuddyAI, .apiKey):
+            // WorkBuddy's static Bearer Token mode stores its credential in the
+            // OAuth-token slot. Prefer that account token for the account-scoped
+            // /v3/config catalog; otherwise this branch incorrectly falls through
+            // to API-key validation and reports "no API key is set".
+            let region = Self.workBuddyRegion(for: instance)
+            if let bearer = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id, account: "manual-oauth-token"
+            ), !bearer.isEmpty {
+                let models = try await WorkBuddyChinaOAuthFlow.fetchModels(
+                    accessToken: bearer,
+                    userID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-user-id"),
+                    domain: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-domain"),
+                    enterpriseID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-enterprise-id"),
+                    region: region
+                )
+                guard !models.isEmpty else { throw ModelRefreshError.noCredential }
+                return models
+            }
+            guard let key = modelFetchAPIKey(for: instance) else {
+                throw ModelRefreshError.noCredential
+            }
+            let base = customBase ?? region.chatBase
+            return try await OpenAIModelsAPI.fetchModels(
+                apiKey: key, baseURL: base, appendV1Suffix: false,
+                forceRefresh: forceRefresh, userAgent: region.userAgent)
+        case (.workBuddyChina, .oauth), (.workBuddyAI, .oauth):
+            // Use WorkBuddy's account-scoped model catalog; /v2/models may only return `auto`.
+            let token = try await WorkBuddyChinaOAuthManager.shared.validAccessToken(
+                instanceId: instance.id
+            )
+            let models = try await WorkBuddyChinaOAuthFlow.fetchModels(
+                accessToken: token,
+                userID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-user-id"),
+                domain: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-domain"),
+                enterpriseID: ProviderKeychainHelper.loadOAuthString(instanceId: instance.id, account: "workbuddy-enterprise-id"),
+                region: Self.workBuddyRegion(for: instance)
+            )
+            guard !models.isEmpty else { throw ModelRefreshError.noCredential }
+            return models
+        case (.raccoon, _):
+            // SenseTime Raccoon: the account-scoped /model_catalog is the only
+            // source of usable ids, for both the OAuth session and a manually
+            // pasted bearer. No compiled-in fallback exists on purpose.
+            let token: String
+            if let manual = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id, account: "manual-oauth-token"
+            ), !manual.isEmpty {
+                token = manual
+            } else {
+                token = try await RaccoonOAuthManager.shared.validAccessToken(instanceId: instance.id)
+            }
+            return try await RaccoonOAuthFlow.fetchModels(accessToken: token)
+        case (.trae, _), (.traeInternational, _):
+            // The directory is a POST that names a roster function, and its
+            // entries are the only callable model ids.
+            let token: String
+            if let manual = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id, account: "manual-oauth-token"
+            ), !manual.isEmpty {
+                token = manual
+            } else {
+                token = try await TraeAccountManager.shared.validAccessToken(
+                    instanceId: instance.id,
+                    expectedSite: instance.providerType == .traeInternational ? .international : nil)
+            }
+            let origin = TraeAccountManager.resolvedOrigin(instance: instance)
+            let ids = TraeAccountManager.extraHeaderValues(instanceId: instance.id)
+            var headers = TraeAPI.clientHeaders()
+            headers.merge(TraeAPI.accountHeaders(
+                token: token, userID: ids.userID,
+                machineID: ids.machineID, deviceID: ids.deviceID
+            )) { _, new in new }
+            let roster = await TraeAPI.roster(origin: origin, headers: headers)
+            guard !roster.isEmpty else { throw ModelRefreshError.noCredential }
+            var models = roster.map { entry in
+                var model = LLMModel(
+                    id: entry.id,
+                    displayName: entry.displayName,
+                    provider: instance.providerType.displayName,
+                    modalityOverride: .textOnly,
+                    contextWindow: entry.contextWindow,
+                    maxOutputTokens: entry.maxTokens,
+                    supportsReasoning: entry.reasoning,
+                    interleavedReasoningField: "reasoning_content"
+                )
+                model.limitsReportedByEndpoint = true
+                return model
+            }
+            // Auto is a real picker entry in the vendor's client but is not a
+            // `config_name` in any roster, so the refresh alone would leave it
+            // marked "not listed by provider". It is served by the inline_chat
+            // scene instead — see `TraeAPI.mendedBody`.
+            if !models.contains(where: { TraeAPI.isAuto($0.id) }) {
+                models.insert(LLMModel(
+                    id: TraeAPI.defaultModel,
+                    displayName: "Auto",
+                    provider: instance.providerType.displayName,
+                    modalityOverride: .textOnly,
+                    contextWindow: 200_000,
+                    maxOutputTokens: 64_000,
+                    supportsReasoning: nil,
+                    interleavedReasoningField: "reasoning_content"
+                ), at: 0)
+            }
+            return models
+
+        case (.autoClaw, _):
+            // Both the sign-in session and a pasted bearer read the same
+            // account-scoped catalog; its entries carry the route id.
+            let token: String
+            if let manual = ProviderKeychainHelper.loadOAuthString(
+                instanceId: instance.id, account: "manual-oauth-token"
+            ), !manual.isEmpty {
+                token = manual
+            } else {
+                token = try await AutoClawAccountManager.shared.validAccessToken(instanceId: instance.id)
+            }
+            return try await AutoClawAPI.fetchModels(
+                accessToken: token, root: instance.effectiveCustomBaseURL)
         case (.githubCopilot, _):
             // [T-copilot-provider] Always the OAuth path — there is no API-key
             // form of Copilot. The session token is minted on demand, so a
@@ -3299,6 +3419,12 @@ final class ProviderConfigStore: ObservableObject {
             // Synced from a newer build — can't fetch; keep whatever's stored.
             return []
         }
+    }
+
+    /// Which WorkBuddy build an instance belongs to. The two share one login
+    /// flow and one catalog shape, differing only in `WorkBuddyRegion`.
+    private static func workBuddyRegion(for instance: ProviderInstance) -> WorkBuddyRegion {
+        instance.providerType == .workBuddyAI ? .international : .china
     }
 
     /// Result of a model fetch with fallback — includes diagnostic warnings for each step.
@@ -3477,6 +3603,12 @@ final class ProviderConfigStore: ObservableObject {
         case .xAI: return "https://api.x.ai"
         case .kimiCode: return "https://api.kimi.com/coding"
         case .githubCopilot: return CopilotConstants.apiBaseURL
+        case .workBuddyChina: return "https://copilot.tencent.com/v2"
+        case .workBuddyAI: return "https://www.workbuddy.ai/v2"
+        case .raccoon: return RaccoonOAuthFlow.llmBase
+        case .autoClaw: return AutoClawAPI.defaultBase
+        case .trae: return TraeAPI.Site.china.apiOrigin
+        case .traeInternational: return TraeAPI.Site.international.apiOrigin
         case .gemini: return "https://generativelanguage.googleapis.com"
         case .openRouter: return "https://openrouter.ai/api"
         case .antigravity: return nil // No public base URL

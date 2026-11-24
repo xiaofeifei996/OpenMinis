@@ -394,24 +394,26 @@ final class ChatOptimizer {
         // reported scroll stutter) and coalesced SwiftUI updates so heavily
         // that the progress looked frozen (the reported "no live update").
         // The cache itself only needs to be durable when the run ends.
-        // [T-speedtest-live-update] Put ONLY the non-nil value in the payload.
-        //
-        // The previous version stored `seconds as Any` with `seconds: Double?`,
-        // so the value sitting in `userInfo` was an `Optional<Double>`, not a
-        // `Double`. Readers did `as? Double`, which came back nil, so every
-        // single-completion publish was interpreted as "clear this row" — the
-        // numbers only ever appeared at the very end, when the whole cache was
-        // re-adopted. Boxing the unwrapped value removes that trap.
-        var info: [AnyHashable: Any] = [ChatOptimizer.latencyChangedIdsKey: [id]]
-        if let seconds {
-            info[ChatOptimizer.latencySecondsKey] = seconds
-        } else if let error {
-            info[ChatOptimizer.latencyErrorKey] = error
+        func publish(id: String, seconds: Double?, error: String?) {
+            // [T-speedtest-live-update] Put ONLY the non-nil value in the payload.
+            //
+            // The previous version stored `seconds as Any` with `seconds: Double?`,
+            // so the value sitting in `userInfo` was an `Optional<Double>`, not a
+            // `Double`. Readers did `as? Double`, which came back nil, so every
+            // single-completion publish was interpreted as "clear this row" — the
+            // numbers only ever appeared at the very end, when the whole cache was
+            // re-adopted. Boxing the unwrapped value removes that trap.
+            var info: [AnyHashable: Any] = [ChatOptimizer.latencyChangedIdsKey: [id]]
+            if let seconds {
+                info[ChatOptimizer.latencySecondsKey] = seconds
+            } else if let error {
+                info[ChatOptimizer.latencyErrorKey] = error
+            }
+            NotificationCenter.default.post(
+                name: ChatOptimizer.latencyUpdatedNotification,
+                object: nil,
+                userInfo: info)
         }
-        NotificationCenter.default.post(
-            name: ChatOptimizer.latencyUpdatedNotification,
-            object: nil,
-            userInfo: info)
 
         // [T-speedtest-throttle-scope] A 429 belongs to ONE provider account.
         //

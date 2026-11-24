@@ -212,31 +212,18 @@ final class TestSession: ObservableObject {
     private static func performTest(_ kind: ModelQuickTestSheet.Kind, entry: ModelEntry) async throws -> TestRun.State {
         switch kind {
         case .text:
-            let provider = try await quickTestProvider(for: entry)
-            let messages = [LLMMessage(
-                role: .user,
-                content: "Hi! I'm setting you up in Minis. Say hello back in one short, friendly sentence.")]
             let responseText: String
-            // WorkBuddy's gateway rejects non-stream chat requests (code 11101),
-            // while normal conversation uses the streaming endpoint successfully.
-            // Quick Test must exercise the same streaming path for this provider.
-            // WorkBuddy's gateway rejects non-streaming chat (code 11101) on
-            // both builds, while normal conversation streams successfully, so
-            // Quick Test must exercise the same path.
-            let quickTestType = ProviderConfigStore.shared
-                .instance(for: entry.providerInstanceId)?.providerType
-            if quickTestType == .workBuddyChina || quickTestType == .workBuddyAI {
-                let stream = try await provider.streamMessage(
-                    messages: messages, systemPrompt: nil, maxTokens: 128, temperature: nil)
-                var accumulated = ""
-                for try await chunk in stream {
-                    if case .text(let delta) = chunk { accumulated += delta }
-                }
-                responseText = accumulated
-            } else {
-                let resp = try await provider.sendMessage(
-                    messages: messages, systemPrompt: nil, maxTokens: 128, temperature: nil)
-                responseText = resp.text
+            do {
+                responseText = try await performTextProbe(entry: entry)
+            } catch {
+                // [T-quicktest-agent-fallback] The plain probe uses the
+                // lightweight `streamMessage` envelope. Raccoon / 小浣熊
+                // rejects it with `400 param model unsupport` for every
+                // model while the same model chats normally through the
+                // agent loop. Retry once with the agent-shaped request a
+                // real turn sends so a working model isn't shown as broken.
+                qtLog.info("[QuickTest] plain probe failed for \(entry.model.id): \(error.localizedDescription); retrying via agent path")
+                responseText = try await performAgentTextProbe(entry: entry)
             }
             let text = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
             return .text(text.isEmpty ? AppLocalized("(empty reply)") : text)
@@ -303,6 +290,54 @@ final class TestSession: ObservableObject {
             let heard = resp.text.trimmingCharacters(in: .whitespacesAndNewlines)
             return .transcript(spoken: spoken, heard: heard.isEmpty ? AppLocalized("(empty transcription)") : heard)
         }
+    }
+
+    /// Lightweight one-shot probe used by text Quick Test.
+    private static func performTextProbe(entry: ModelEntry) async throws -> String {
+        let provider = try await quickTestProvider(for: entry)
+        let messages = [LLMMessage(
+            role: .user,
+            content: "Hi! I'm setting you up in Minis. Say hello back in one short, friendly sentence.")]
+        // WorkBuddy's gateway rejects non-stream chat requests (code 11101),
+        // while normal conversation uses the streaming endpoint successfully.
+        // Quick Test must exercise the same streaming path for this provider.
+        let quickTestType = ProviderConfigStore.shared
+            .instance(for: entry.providerInstanceId)?.providerType
+        if quickTestType == .workBuddyChina || quickTestType == .workBuddyAI {
+            let stream = try await provider.streamMessage(
+                messages: messages, systemPrompt: nil, maxTokens: 128, temperature: nil)
+            var accumulated = ""
+            for try await chunk in stream {
+                if case .text(let delta) = chunk { accumulated += delta }
+            }
+            return accumulated
+        }
+        let resp = try await provider.sendMessage(
+            messages: messages, systemPrompt: nil, maxTokens: 128, temperature: nil)
+        return resp.text
+    }
+
+    /// Retry a failed Quick Test through the exact request shape a real chat
+    /// turn uses. Some gateways (Raccoon / 小浣熊) reject the lightweight
+    /// `streamMessage` envelope with `400 param model unsupport` for every
+    /// model, even though those models chat normally in the agent loop.
+    private static func performAgentTextProbe(entry: ModelEntry) async throws -> String {
+        let provider = await AIChatViewModel.makeAgentProvider(
+            for: entry, sessionId: OpenCodeChannel.oneOffSessionId())
+        let messages: [AgentMessage] = [
+            AgentMessage(role: .user, parts: [.text("hi")])
+        ]
+        let stream = try await provider.streamAgentMessageClamped(
+            messages: messages,
+            systemPrompt: nil,
+            tools: [],
+            maxTokens: 128,
+            thinkingLevel: .off)
+        var accumulated = ""
+        for try await event in stream {
+            if case .textDelta(let delta) = event, !delta.isEmpty { accumulated += delta }
+        }
+        return accumulated
     }
 
     // MARK: - On-device test-clip synthesis (for transcription test)

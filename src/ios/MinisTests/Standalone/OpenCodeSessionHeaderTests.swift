@@ -263,6 +263,20 @@ check("both the text and the image test go through it",
 check("no quick test path builds a provider without a session id",
       quick.contains("LLMProviderFactory.makeProvider(for: entry)"), false)
 
+// [T-quicktest-agent-fallback] A plain `streamMessage` probe is rejected by
+// gateways that only accept the agent-loop envelope (Raccoon: 400 param model
+// unsupport for every model). On failure Quick Test must retry once through
+// the exact request shape a real turn sends, with its own one-off session.
+check("a failed plain probe retries via the agent path",
+      quick.contains("retrying via agent path")
+      && quick.contains("responseText = try await performAgentTextProbe(entry: entry)"))
+check("agent-path probe builds the provider through the shared agent factory",
+      quick.contains("AIChatViewModel.makeAgentProvider(")
+      && quick.contains("OpenCodeChannel.oneOffSessionId())"))
+check("agent-path probe sends the agent-shaped request, not streamMessage",
+      quick.contains("provider.streamAgentMessageClamped(")
+      && quick.contains("thinkingLevel: .off"))
+
 // [T-opencode-every-entry] Every path that talks to a model must hand the
 // channel a session id. Before this, compaction built its provider through a
 // hand-written copy of the factory that never attached the channel at all

@@ -91,6 +91,10 @@ jobs:
           python3 scripts/test_wait_presentation.py
           swift src/ios/MinisTests/Standalone/StreamStallWatchdogTests.swift
 
+      - name: Test Quick Test agent-path fallback
+        run: |
+          python3 scripts/test_quicktest_agent_fallback.py
+
       - name: Validate Xcode project prerequisites
         shell: bash
         run: |

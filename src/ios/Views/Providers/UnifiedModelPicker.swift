@@ -590,6 +590,10 @@ struct UnifiedModelPicker: View {
         // observer of the speed-test cache, so rows repaint when a background
         // test finishes (the cache itself lives in UserDefaults, not in @State).
         let _ = latencyTick
+        // [T-speedtest-scroll-jank] Decode the badge table ONCE for this body,
+        // then hand the cheap value to every row. Decoding inside each row ran
+        // a full JSON parse per row per frame (see LatencyBadges).
+        let badges = Self.currentLatencyBadges()
         List {
             if let note = config.headerNote {
                 Section {
@@ -646,7 +650,7 @@ struct UnifiedModelPicker: View {
             // [T-picker-search-cap] Render the capped list; the footer below
             // says so when matches were truncated.
             ForEach(cappedEntriesByInstance, id: \.instance.id) { item in
-                instanceSection(item)
+                instanceSection(item, badges: badges)
             }
             if !debouncedSearch.isEmpty, totalSearchMatches > Self.maxSearchResults {
                 Section {
@@ -1394,7 +1398,8 @@ struct UnifiedModelPicker: View {
     // MARK: - Instance Section
 
     @ViewBuilder
-    private func instanceSection(_ item: (instance: ProviderInstance, entries: [ModelEntry])) -> some View {
+    private func instanceSection(_ item: (instance: ProviderInstance, entries: [ModelEntry]),
+                                 badges: LatencyBadges) -> some View {
         let isCollapsed = searchText.isEmpty && collapsedInstanceIds.contains(item.instance.id)
         // When collapsed, surface the currently-selected entry (if it lives in
         // this section) rather than blindly the first — so the active model stays
@@ -1415,7 +1420,7 @@ struct UnifiedModelPicker: View {
         let visibleEntries = isCollapsed ? collapsedEntry : item.entries
         Section {
             ForEach(visibleEntries) { entry in
-                entryRow(entry)
+                entryRow(entry, latency: badges)
             }
             if isCollapsed && item.entries.count > 1 {
                 Button {
@@ -1494,7 +1499,7 @@ struct UnifiedModelPicker: View {
 
     // MARK: - Entry Row
 
-    private func entryRow(_ entry: ModelEntry) -> some View {
+    private func entryRow(_ entry: ModelEntry, latency: LatencyBadges) -> some View {
         let disabled = config.isDisabled?(entry) ?? false
         let traits = entry.displayTraits
         let isSelected: Bool = {
@@ -1567,7 +1572,7 @@ struct UnifiedModelPicker: View {
 
                 // [T-latency-order] Match reference build: latency badge / red-x on
                 // the left, wifi icon rightmost.
-                if let ms = latencyBadgeText(for: entry) {
+                if let ms = latency.text(for: entry.id) {
                     Text(ms)
                         .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(.secondary)
@@ -1575,7 +1580,7 @@ struct UnifiedModelPicker: View {
                         .padding(.vertical, 1)
                         .background(Color(UIColor.tertiarySystemFill))
                         .clipShape(RoundedRectangle(cornerRadius: 3))
-                } else if latencyFailed(for: entry) {
+                } else if latency.isFailed(entry.id) {
                     // 测速失败（软信号）：红✗标记，但模型仍可用。
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 11, weight: .semibold))
@@ -1629,34 +1634,52 @@ struct UnifiedModelPicker: View {
         }
     }
 
-    /// Latency badge text (e.g. "1.4s") for an entry, or nil when untested.
-    /// Reads the latency cache directly from UserDefaults (where ChatOptimizer
-    /// persists it) so this non-isolated view helper stays off the MainActor.
+    /// Latency badges for the whole list, decoded ONCE per render pass.
+    ///
+    /// [T-speedtest-scroll-jank] This used to be two helpers that each read the
+    /// UserDefaults blob and ran a full `JSONDecoder().decode` inside every
+    /// model row's body — twice per row, per frame. With ~54 measured entries
+    /// and ~160 recorded errors, scrolling a picker of a few hundred rows
+    /// decoded the same JSON hundreds of times per frame, on the main thread,
+    /// which is exactly the stutter reported while a speed test was running
+    /// (the notification fires and re-renders everything mid-scroll).
+    ///
+    /// One decode per body evaluation, then cheap dictionary lookups per row.
+    private struct LatencyBadges {
+        var seconds: [String: Double] = [:]
+        var failed: Set<String> = []
+
+        func text(for entryId: String) -> String? {
+            guard let s = seconds[entryId] else { return nil }
+            return String(format: "%.1fs", s)
+        }
+
+        func isFailed(_ entryId: String) -> Bool {
+            // A measured latency wins: a stale error for a model that has since
+            // answered must not keep the red cross.
+            failed.contains(entryId) && seconds[entryId] == nil
+        }
+    }
+
+    /// Reads the cache the same way the optimizer writes it (UserDefaults),
+    /// keeping this non-isolated view helper off the MainActor.
+    private static func currentLatencyBadges() -> LatencyBadges {
+        var badges = LatencyBadges()
+        guard let data = UserDefaults.standard.data(forKey: "chatOptimizer.latencyCache"),
+              let cache = try? JSONDecoder().decode(ModelLatencyCache.self, from: data) else {
+            return badges
+        }
+        badges.seconds = cache.entries
+        badges.failed = Set(cache.errors.keys)
+        return badges
+    }
+
     /// [T-speedtest-unavailable] Grey wifi ONLY when the provider has delisted the
     /// model. A failed speed test is a SOFT signal (transient network/auth blip)
-    /// and must NOT grey out a model the user knows works — so we no longer read
-    /// `errors` here. The latency badge still shows a short failure hint, but the
-    /// wifi stays green for any provider-listed model.
+    /// and must NOT grey out a model the user knows works — so `errors` never
+    /// drives the wifi. The latency badge still shows a short failure hint.
     private func isEntryUnavailable(_ entry: ModelEntry) -> Bool {
         entry.isUnavailableFromProvider
-    }
-
-    private func latencyBadgeText(for entry: ModelEntry) -> String? {
-        let key = "chatOptimizer.latencyCache"
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let cache = try? JSONDecoder().decode(ModelLatencyCache.self, from: data) else { return nil }
-        if let seconds = cache.entries[entry.id] {
-            return String(format: "%.1fs", seconds)
-        }
-        return nil
-    }
-
-    /// 测速失败（软信号）：用红✗标记，但模型仍可用、不灰化。
-    private func latencyFailed(for entry: ModelEntry) -> Bool {
-        let key = "chatOptimizer.latencyCache"
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let cache = try? JSONDecoder().decode(ModelLatencyCache.self, from: data) else { return false }
-        return cache.errors[entry.id] != nil && cache.entries[entry.id] == nil
     }
 
     /// Modality tags and the "unavailable" tag, as HStack children.

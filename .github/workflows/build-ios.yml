@@ -1,1 +1,148 @@
-bmFtZTogQnVpbGQgT3Blbk1pbmlzIGlPUwoKb246CiAgd29ya2Zsb3dfZGlzcGF0Y2g6CiAgICBpbnB1dHM6CiAgICAgIGZyZXNoOgogICAgICAgIGRlc2NyaXB0aW9uOiAnSWdub3JlIGluY3JlbWVudGFsLWJ1aWxkIGNhY2hlIChmb3JjZSBhIGNsZWFuIGNvbXBpbGUpJwogICAgICAgIHJlcXVpcmVkOiBmYWxzZQogICAgICAgIHR5cGU6IGJvb2xlYW4KICAgICAgICBkZWZhdWx0OiBmYWxzZQogIHB1c2g6CiAgICBwYXRoczoKICAgICAgLSAiLmdpdGh1Yi93b3JrZmxvd3MvYnVpbGQtaW9zLnltbCIKICAgICAgLSAic3JjL2lvcy8qKiIKICAgICAgLSAiZGVwcy8qKiIKICAgICAgLSAic2NyaXB0cy8qKiIKICAgICAgLSAiQlVJTERJTkcubWQiCgpwZXJtaXNzaW9uczoKICBjb250ZW50czogcmVhZAoKY29uY3VycmVuY3k6CiAgZ3JvdXA6IGJ1aWxkLWlvcy0ke3sgZ2l0aHViLnJlZiB9fQogIGNhbmNlbC1pbi1wcm9ncmVzczogdHJ1ZQoKam9iczoKICBidWlsZC1pb3M6CiAgICBydW5zLW9uOiBtYWNvcy0xNQogICAgdGltZW91dC1taW51dGVzOiAxNTAKICAgIHN0ZXBzOgogICAgICAtIG5hbWU6IENoZWNrb3V0IHNvdXJjZSBhbmQgc3VibW9kdWxlcwogICAgICAgIHVzZXM6IGFjdGlvbnMvY2hlY2tvdXRAdjQKICAgICAgICB3aXRoOgogICAgICAgICAgc3VibW9kdWxlczogcmVjdXJzaXZlCgogICAgICAtIG5hbWU6IFNlbGVjdCBYY29kZQogICAgICAgIHJ1bjogfAogICAgICAgICAgeGNvZGUtc2VsZWN0IC1wCiAgICAgICAgICB4Y29kZWJ1aWxkIC12ZXJzaW9uCiAgICAgICAgICB4Y3J1biAtLXNkayBpcGhvbmVvcyAtLXNob3ctc2RrLXZlcnNpb24KCiAgICAgICMg4pSA4pSAIE5hdGl2ZSBkZXBzIChjYWNoZWQpIOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgAogICAgICAjIFJlc3RvcmVkIEJFRk9SRSB0aGUgdG9vbGNoYWluIHN0ZXBzIG9uIHB1cnBvc2U6IHRoZSBicmV3IHBhY2thZ2VzIGFuZCB0aGUKICAgICAgIyBNZXRhbCB0b29sY2hhaW4gYXJlIG9ubHkgbmVlZGVkIHdoZW4gdGhlIGRlcHMgYWN0dWFsbHkgZ2V0IChyZSlidWlsdCBmcm9tCiAgICAgICMgc291cmNlLiBPbiBhIHdhcm0gY2FjaGUgdGhpcyBza2lwcyB+NS03IG1pbnV0ZXMgb2Ygc2V0dXAgcGVyIHJ1bi4KICAgICAgLSBuYW1lOiBDYWNoZSBuYXRpdmUgZGVwcwogICAgICAgIGlkOiBkZXBzCiAgICAgICAgdXNlczogYWN0aW9ucy9jYWNoZUB2NAogICAgICAgIHdpdGg6CiAgICAgICAgICBwYXRoOiB8CiAgICAgICAgICAgIGRlcHMvbGFtZS1idWlsZAogICAgICAgICAgICBkZXBzL2ZyYW1ld29ya3MKICAgICAgICAgICAgZGVwcy9saWJzCiAgICAgICAgICAgIGRlcHMvaW5jbHVkZQogICAgICAgICAgICBkZXBzL3Jlc291cmNlcwogICAgICAgICAga2V5OiBvcGVubWluaXMtZGVwcy0ke3sgcnVubmVyLm9zIH19LSR7eyBoYXNoRmlsZXMoJ2RlcHMvYnVpbGRfbGFtZS5zaCcsJ2RlcHMvYnVpbGRfZmZtcGVnLnNoJywnZGVwcy9idWlsZF9pc2guc2gnLCdkZXBzL3ByZXBhcmVfYWxwaW5lX3Jvb3Rmcy5zaCcsJ2RlcHMvYnVpbGRfcmNsb25lX2lvcy5zaCcpIH19CgogICAgICAtIG5hbWU6IEluc3RhbGwgbmF0aXZlIGJ1aWxkIHRvb2xzCiAgICAgICAgaWY6IHN0ZXBzLmRlcHMub3V0cHV0cy5jYWNoZS1oaXQgIT0gJ3RydWUnCiAgICAgICAgIyBObyBgYnJldyB1cGRhdGVgOiBpdCBjb3N0cyAyLTQgbWludXRlcyBhbmQgdGhlIHByZWluc3RhbGxlZCBmb3JtdWxhCiAgICAgICAgIyBpbmRleCBvbiB0aGUgcnVubmVyIGltYWdlIGlzIHN1ZmZpY2llbnQgZm9yIHRoZXNlIHN0YWJsZSBwYWNrYWdlcy4KICAgICAgICBydW46IHwKICAgICAgICAgIGJyZXcgaW5zdGFsbCBuaW5qYSBsbHZtIGxpYmFyY2hpdmUgcGtnLWNvbmZpZyBnbwogICAgICAgICAgcHl0aG9uMyAtbSBwaXAgaW5zdGFsbCAtLXVzZXIgbWVzb24KCiAgICAgIC0gbmFtZTogSW5zdGFsbCBNZXRhbCB0b29sY2hhaW4KICAgICAgICBpZjogc3RlcHMuZGVwcy5vdXRwdXRzLmNhY2hlLWhpdCAhPSAndHJ1ZScKICAgICAgICBydW46IHhjb2RlYnVpbGQgLWRvd25sb2FkQ29tcG9uZW50IE1ldGFsVG9vbGNoYWluCgogICAgICAtIG5hbWU6IFByZXBhcmUgYnVpbGQtdGltZSBjb25maWd1cmF0aW9uCiAgICAgICAgcnVuOiB8CiAgICAgICAgICBjcCBzcmMvaW9zL0NvbmZpZ3MvUHJvdmlkZXJDdXN0b21pemF0aW9uLnhjY29uZmlnLmV4YW1wbGUgc3JjL2lvcy9Db25maWdzL1Byb3ZpZGVyQ3VzdG9taXphdGlvbi54Y2NvbmZpZwoKICAgICAgLSBuYW1lOiBCdWlsZCBMQU1FCiAgICAgICAgaWY6IHN0ZXBzLmRlcHMub3V0cHV0cy5jYWNoZS1oaXQgIT0gJ3RydWUnCiAgICAgICAgcnVuOiAuL2RlcHMvYnVpbGRfbGFtZS5zaAoKICAgICAgLSBuYW1lOiBCdWlsZCBGRm1wZWcKICAgICAgICBpZjogc3RlcHMuZGVwcy5vdXRwdXRzLmNhY2hlLWhpdCAhPSAndHJ1ZScKICAgICAgICBydW46IC4vZGVwcy9idWlsZF9mZm1wZWcuc2gKCiAgICAgIC0gbmFtZTogQnVpbGQgaVNICiAgICAgICAgaWY6IHN0ZXBzLmRlcHMub3V0cHV0cy5jYWNoZS1oaXQgIT0gJ3RydWUnCiAgICAgICAgcnVuOiAuL2RlcHMvYnVpbGRfaXNoLnNoCgogICAgICAtIG5hbWU6IFByZXBhcmUgQWxwaW5lIHJvb3QgZmlsZXN5c3RlbQogICAgICAgIGlmOiBzdGVwcy5kZXBzLm91dHB1dHMuY2FjaGUtaGl0ICE9ICd0cnVlJwogICAgICAgIHJ1bjogLi9kZXBzL3ByZXBhcmVfYWxwaW5lX3Jvb3Rmcy5zaAoKICAgICAgLSBuYW1lOiBCdWlsZCBpT1MgcmNsb25lIGZyYW1ld29yawogICAgICAgIGlmOiBzdGVwcy5kZXBzLm91dHB1dHMuY2FjaGUtaGl0ICE9ICd0cnVlJwogICAgICAgIHJ1bjogLi9kZXBzL2J1aWxkX3JjbG9uZV9pb3Muc2gKCiAgICAgICMg4pSA4pSAIEFwcCBidWlsZCAoaW5jcmVtZW50YWwpIOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgAogICAgICAtIG5hbWU6IFJlc3RvcmUgRGVyaXZlZERhdGEKICAgICAgICBpZjogaW5wdXRzLmZyZXNoICE9IHRydWUKICAgICAgICB1c2VzOiBhY3Rpb25zL2NhY2hlQHY0CiAgICAgICAgd2l0aDoKICAgICAgICAgICMgT25seSB3aGF0IGFuIGluY3JlbWVudGFsIGJ1aWxkIG5lZWRzOiBvYmplY3QgZmlsZXMsIHByb2R1Y3RzIGFuZCB0aGUKICAgICAgICAgICMgcmVzb2x2ZWQgU1BNIGNoZWNrb3V0cy4gSW5kZXgubm9pbmRleCBhbmQgTG9ncyBhcmUgc2tpcHBlZC4KICAgICAgICAgIHBhdGg6IHwKICAgICAgICAgICAgYnVpbGQvRGVyaXZlZERhdGEvQnVpbGQKICAgICAgICAgICAgYnVpbGQvRGVyaXZlZERhdGEvU291cmNlUGFja2FnZXMKICAgICAgICAgIGtleTogZGQtJHt7IHJ1bm5lci5vcyB9fS0ke3sgZ2l0aHViLnJlZl9uYW1lIH19LSR7eyBoYXNoRmlsZXMoJ3NyYy9pb3MvKiovKi5zd2lmdCcsJ3NyYy9pb3MvTWluaXMueGNvZGVwcm9qLyoqJykgfX0KICAgICAgICAgIHJlc3RvcmUta2V5czogfAogICAgICAgICAgICBkZC0ke3sgcnVubmVyLm9zIH19LSR7eyBnaXRodWIucmVmX25hbWUgfX0tCiAgICAgICAgICAgIGRkLSR7eyBydW5uZXIub3MgfX0tCgogICAgICAtIG5hbWU6IEJ1aWxkIE9wZW5NaW5pcyBpT1MgYXBwCiAgICAgICAgZW52OgogICAgICAgICAgSURFQnVpbGRPcGVyYXRpb25NYXhOdW1iZXJPZkNvbmN1cnJlbnRDb21waWxlVGFza3M6IDEyCiAgICAgICAgcnVuOiB8CiAgICAgICAgICBzZXQgLW8gcGlwZWZhaWwKICAgICAgICAgIG1rZGlyIC1wIGJ1aWxkCiAgICAgICAgICB4Y29kZWJ1aWxkIFwKICAgICAgICAgICAgLXByb2plY3Qgc3JjL2lvcy9NaW5pcy54Y29kZXByb2ogXAogICAgICAgICAgICAtc2NoZW1lIE1pbmlzIFwKICAgICAgICAgICAgLWNvbmZpZ3VyYXRpb24gRGVidWcgXAogICAgICAgICAgICAtZGVzdGluYXRpb24gJ2dlbmVyaWMvcGxhdGZvcm09aU9TJyBcCiAgICAgICAgICAgIC1kZXJpdmVkRGF0YVBhdGggYnVpbGQvRGVyaXZlZERhdGEgXAogICAgICAgICAgICBDT0RFX1NJR05JTkdfQUxMT1dFRD1OTyBcCiAgICAgICAgICAgIGJ1aWxkIHwgdGVlIGJ1aWxkL3hjb2RlYnVpbGQubG9nCgogICAgICAtIG5hbWU6IEJ1aWxkIHN1bW1hcnkKICAgICAgICBpZjogYWx3YXlzKCkKICAgICAgICBydW46IHwKICAgICAgICAgIExPRz1idWlsZC94Y29kZWJ1aWxkLmxvZwogICAgICAgICAgWyAtZiAiJExPRyIgXSB8fCBleGl0IDAKICAgICAgICAgIFc9JChncmVwIC1jICd3YXJuaW5nOicgIiRMT0ciIHx8IHRydWUpCiAgICAgICAgICBFPSQoZ3JlcCAtYyAnZXJyb3I6JyAiJExPRyIgfHwgdHJ1ZSkKICAgICAgICAgIGVjaG8gIndhcm5pbmdzPSR7VzotMH0gZXJyb3JzPSR7RTotMH0iID4+ICRHSVRIVUJfU1RFUF9TVU1NQVJZCiAgICAgICAgICBlY2hvICJjb21taXQ9JChnaXQgcmV2LXBhcnNlIC0tc2hvcnQgSEVBRCkiID4+ICRHSVRIVUJfU1RFUF9TVU1NQVJZCgogICAgICAtIG5hbWU6IFBhY2thZ2UgdW5zaWduZWQgYXBwIGJ1aWxkCiAgICAgICAgcnVuOiB8CiAgICAgICAgICBBUFBfUEFUSD0iYnVpbGQvRGVyaXZlZERhdGEvQnVpbGQvUHJvZHVjdHMvRGVidWctaXBob25lb3MvTWluaXMuYXBwIgogICAgICAgICAgdGVzdCAtZCAiJEFQUF9QQVRIIgogICAgICAgICAgZGl0dG8gLWMgLWsgLS1zZXF1ZXN0ZXJSc3JjIC0ta2VlcFBhcmVudCAiJEFQUF9QQVRIIiBidWlsZC9PcGVuTWluaXMtaU9TLXVuc2lnbmVkLWFwcC56aXAKICAgICAgICAgIGxzIC1saCBidWlsZC9PcGVuTWluaXMtaU9TLXVuc2lnbmVkLWFwcC56aXAKICAgICAgICAgIGVjaG8gInppcD0kKGR1IC1tIGJ1aWxkL09wZW5NaW5pcy1pT1MtdW5zaWduZWQtYXBwLnppcCB8IGN1dCAtZjEpTUIiID4+ICRHSVRIVUJfU1RFUF9TVU1NQVJZCgogICAgICAtIG5hbWU6IFVwbG9hZCBidWlsZCBhcnRpZmFjdAogICAgICAgIHVzZXM6IGFjdGlvbnMvdXBsb2FkLWFydGlmYWN0QHY0CiAgICAgICAgd2l0aDoKICAgICAgICAgIG5hbWU6IE9wZW5NaW5pcy1pT1MtdW5zaWduZWQtYXBwCiAgICAgICAgICBwYXRoOiBidWlsZC9PcGVuTWluaXMtaU9TLXVuc2lnbmVkLWFwcC56aXAKICAgICAgICAgIGlmLW5vLWZpbGVzLWZvdW5kOiBlcnJvcgogICAgICAgICAgcmV0ZW50aW9uLWRheXM6IDc=
+name: Build OpenMinis iOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      fresh:
+        description: 'Ignore incremental-build cache (force a clean compile)'
+        required: false
+        type: boolean
+        default: false
+  push:
+    paths:
+      - ".github/workflows/build-ios.yml"
+      - "src/ios/**"
+      - "deps/**"
+      - "scripts/**"
+      - "BUILDING.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    timeout-minutes: 150
+    steps:
+      - name: Checkout source and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      # ── Native deps (cached) ────────────────────────────────────────────────
+      # Restored BEFORE the toolchain steps on purpose: the brew packages and the
+      # Metal toolchain are only needed when the deps actually get (re)built from
+      # source. On a warm cache this skips ~5-7 minutes of setup per run.
+      - name: Cache native deps
+        id: deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps/lame-build
+            deps/frameworks
+            deps/libs
+            deps/include
+            deps/resources
+          key: openminis-deps-${{ runner.os }}-${{ hashFiles('deps/build_lame.sh','deps/build_ffmpeg.sh','deps/build_ish.sh','deps/prepare_alpine_rootfs.sh','deps/build_rclone_ios.sh') }}
+
+      - name: Install native build tools
+        if: steps.deps.outputs.cache-hit != 'true'
+        # No `brew update`: it costs 2-4 minutes and the preinstalled formula
+        # index on the runner image is sufficient for these stable packages.
+        run: |
+          brew install ninja llvm libarchive pkg-config go
+          python3 -m pip install --user meson
+
+      - name: Install Metal toolchain
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Prepare build-time configuration
+        run: |
+          cp src/ios/Configs/ProviderCustomization.xcconfig.example src/ios/Configs/ProviderCustomization.xcconfig
+
+      - name: Build LAME
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: ./deps/build_lame.sh
+
+      - name: Build FFmpeg
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: ./deps/build_ffmpeg.sh
+
+      - name: Build iSH
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: ./deps/build_ish.sh
+
+      - name: Prepare Alpine root filesystem
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: ./deps/prepare_alpine_rootfs.sh
+
+      - name: Build iOS rclone framework
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: ./deps/build_rclone_ios.sh
+
+      # ── App build (incremental) ─────────────────────────────────────────────
+      - name: Restore DerivedData
+        if: inputs.fresh != true
+        uses: actions/cache@v4
+        with:
+          # Only what an incremental build needs: object files, products and the
+          # resolved SPM checkouts. Index.noindex and Logs are skipped.
+          path: |
+            build/DerivedData/Build
+            build/DerivedData/SourcePackages
+          key: dd-${{ runner.os }}-${{ github.ref_name }}-${{ hashFiles('src/ios/**/*.swift','src/ios/Minis.xcodeproj/**') }}
+          restore-keys: |
+            dd-${{ runner.os }}-${{ github.ref_name }}-
+            dd-${{ runner.os }}-
+
+      - name: Build OpenMinis iOS app
+        env:
+          IDEBuildOperationMaxNumberOfConcurrentCompileTasks: 12
+        run: |
+          set -o pipefail
+          mkdir -p build
+          xcodebuild \
+            -project src/ios/Minis.xcodeproj \
+            -scheme Minis \
+            -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            build | tee build/xcodebuild.log
+
+      - name: Build summary
+        if: always()
+        run: |
+          LOG=build/xcodebuild.log
+          [ -f "$LOG" ] || exit 0
+          W=$(grep -c 'warning:' "$LOG" || true)
+          E=$(grep -c 'error:' "$LOG" || true)
+          echo "warnings=${W:-0} errors=${E:-0}" >> $GITHUB_STEP_SUMMARY
+          echo "commit=$(git rev-parse --short HEAD)" >> $GITHUB_STEP_SUMMARY
+
+      - name: Package unsigned app build
+        run: |
+          APP_PATH="build/DerivedData/Build/Products/Debug-iphoneos/Minis.app"
+          test -d "$APP_PATH"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" build/OpenMinis-iOS-unsigned-app.zip
+          ls -lh build/OpenMinis-iOS-unsigned-app.zip
+          echo "zip=$(du -m build/OpenMinis-iOS-unsigned-app.zip | cut -f1)MB" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenMinis-iOS-unsigned-app
+          path: build/OpenMinis-iOS-unsigned-app.zip
+          if-no-files-found: error
+          retention-days: 7

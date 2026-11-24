@@ -599,11 +599,10 @@ struct UnifiedModelPicker: View {
         // [T-optimize-prompt] Reading the latency tick registers this view as an
         // observer of the speed-test cache, so rows repaint when a background
         // test finishes (the cache itself lives in UserDefaults, not in @State).
-        let _ = latencyTick
-        // [T-speedtest-scroll-jank] Rows read the badge tables once per body,
-        // not once per row: decoding inside each row ran a full JSON parse per
-        // row per frame. [T-speedtest-live-update] The tables themselves live in
-        // @State so a single-entry publish patches one row.
+        // [T-speedtest-live-update] One lookup per row from these tables; the
+        // row's badge view is `Equatable`, so SwiftUI skips re-rendering every
+        // row whose own two values did not change. Without that, one entry's
+        // value invalidates the whole list on every publish.
         let badges = LatencyBadges(seconds: latencySeconds, failed: latencyFailedIds)
         List {
             if let note = config.headerNote {
@@ -749,20 +748,34 @@ struct UnifiedModelPicker: View {
             Task { await ChatOptimizer.shared.ensureLatencyDataOnce(sessionId: sid) }
         }
         .onReceive(NotificationCenter.default.publisher(for: ChatOptimizer.latencyUpdatedNotification)) { note in
-            // [T-speedtest-live-update] A publish that names its entries is
-            // patched into the badge tables in place: only the rows whose
-            // values actually changed re-render, so one publish per completed
-            // probe is cheap. A publish with no id list (end of a run, cache
-            // reset) falls back to a full re-read.
+            // [T-speedtest-live-update] Patch the one row named by the note.
+            //
+            // [T-speedtest-publish-cheap] The value travels IN the note, so this
+            // is a dictionary write — no cache read, no JSON decode. That is why
+            // the updates can arrive per completion without starving the main
+            // thread while the list is being scrolled.
             let ids = note.userInfo?[ChatOptimizer.latencyChangedIdsKey] as? [String]
-            if let ids, !ids.isEmpty {
-                let refreshed = Self.currentLatencyBadges(restrictedTo: ids)
-                latencySeconds.merge(refreshed.seconds) { _, new in new }
-                latencyFailedIds.formUnion(refreshed.failed)
-                latencyFailedIds.subtract(refreshed.cleared)
-            } else {
+            guard let ids, !ids.isEmpty else {
+                // No id list: the whole cache may have changed.
                 adoptLatencyBadges(Self.currentLatencyBadges())
                 latencyTick &+= 1
+                return
+            }
+            let seconds = note.userInfo?[ChatOptimizer.latencySecondsKey] as? Double
+            let error = note.userInfo?[ChatOptimizer.latencyErrorKey] as? String
+            for id in ids {
+                if let seconds {
+                    latencySeconds[id] = seconds
+                    latencyFailedIds.remove(id)
+                } else if let error {
+                    latencySeconds.removeValue(forKey: id)
+                    latencyFailedIds.insert(id)
+                } else {
+                    // Throttled or unmeasurable: leave the row alone rather than
+                    // inventing a value for it.
+                    latencySeconds.removeValue(forKey: id)
+                    latencyFailedIds.remove(id)
+                }
             }
         }
         .onDisappear { refreshTask?.cancel() }
@@ -1450,10 +1463,7 @@ struct UnifiedModelPicker: View {
         let visibleEntries = isCollapsed ? collapsedEntry : item.entries
         Section {
             ForEach(visibleEntries) { entry in
-                // [T-speedtest-live-update] Resolve THIS row's badge here, as
-                // plain values. Passing the whole table would make every row
-                // depend on it, so one entry's change would re-render all of
-                // them; two `Equatable` values keep the dependency per-row.
+                // [T-speedtest-live-update] Two plain values, one per row.
                 entryRow(entry,
                          latencyText: badges.text(for: entry.id),
                          latencyFailed: badges.isFailed(entry.id))
@@ -1610,21 +1620,9 @@ struct UnifiedModelPicker: View {
 
                 // [T-latency-order] Match reference build: latency badge / red-x on
                 // the left, wifi icon rightmost.
-                if let ms = latencyText {
-                    Text(ms)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(Color(UIColor.tertiarySystemFill))
-                        .clipShape(RoundedRectangle(cornerRadius: 3))
-                } else if latencyFailed {
-                    // 测速失败（软信号）：红✗标记，但模型仍可用。
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.red)
-                        .frame(width: 18)
-                }
+                // [T-speedtest-live-update] Its own view so only this row reacts
+                // to this entry's value.
+                LatencyBadgeView(text: latencyText, failed: latencyFailed).equatable()
 
                 // [T-optimize-prompt] Availability wifi icon on the trailing edge.
                 // Green = reachable; grey = unavailable (provider delisted it).
@@ -1669,6 +1667,40 @@ struct UnifiedModelPicker: View {
             Text(traits.subtitle ?? entry.model.id)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+        }
+    }
+
+    /// One row's latency badge.
+    ///
+    /// [T-speedtest-live-update] `Equatable` on purpose: SwiftUI compares the
+    /// two values and skips this view's body when they did not change, so a
+    /// publish for one entry only renders that entry's badge. Passing the
+    /// tables straight in made every row re-evaluate on every publish, which is
+    /// what kept progress from appearing smoothly and what janked scrolling.
+    private struct LatencyBadgeView: View, Equatable {
+        let text: String?
+        let failed: Bool
+
+        static func == (a: Self, b: Self) -> Bool { a.text == b.text && a.failed == b.failed }
+
+        var body: some View {
+            Group {
+                if let text {
+                    Text(text)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color(UIColor.tertiarySystemFill))
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                } else if failed {
+                    // 测速失败（软信号）：红✗标记，但模型仍可用。
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.red)
+                        .frame(width: 18)
+                }
+            }
         }
     }
 

@@ -384,15 +384,23 @@ final class ChatOptimizer {
         var updated = cache
 
         // [T-speedtest-live-update] Publish as each probe lands so entries fill
-        // in progressively. The notification names the entry that changed, and
-        // the picker patches only that row — which is what makes a publish per
-        // completion affordable instead of repainting the whole list.
-        func publish(ids: [String]) {
-            writeLatencyCache(updated)
+        // in progressively.
+        //
+        // [T-speedtest-publish-cheap] The payload IS the new value, and nothing
+        // is persisted here. The first version wrote the whole cache to
+        // UserDefaults and the picker decoded it back, for EVERY completion —
+        // a JSON encode + disk write + JSON decode per probe, all on the main
+        // actor. With concurrency 6 that saturated the main thread (the
+        // reported scroll stutter) and coalesced SwiftUI updates so heavily
+        // that the progress looked frozen (the reported "no live update").
+        // The cache itself only needs to be durable when the run ends.
+        func publish(id: String, seconds: Double?, error: String?) {
             NotificationCenter.default.post(
                 name: ChatOptimizer.latencyUpdatedNotification,
                 object: nil,
-                userInfo: [ChatOptimizer.latencyChangedIdsKey: ids])
+                userInfo: [ChatOptimizer.latencyChangedIdsKey: [id],
+                           ChatOptimizer.latencySecondsKey: seconds as Any,
+                           ChatOptimizer.latencyErrorKey: error as Any])
         }
 
         // [T-speedtest-throttle-scope] A 429 belongs to ONE provider account.
@@ -460,6 +468,7 @@ final class ChatOptimizer {
                     updated.errors.removeValue(forKey: id)
                     done += 1
                     progress?(done, entries.count)
+                    publish(id: id, seconds: lat, error: nil)
                 } else if Self.isThrottle(probe) {
                     // [T-speedtest-throttle] The ACCOUNT is rate limited, not
                     // this model: leave no error behind and back this provider
@@ -471,6 +480,7 @@ final class ChatOptimizer {
                         queue.append(original)
                     }
                     logger.info("[latency] \(providerId.prefix(8)) throttled; backing off, \(queue.count) pending")
+                    publish(id: id, seconds: nil, error: nil)   // clear any badge
                 } else {
                     // [T-speedtest-soft-fail] A failed speed test is NOT proof the
                     // model is unusable — transient network/auth blips would wrongly
@@ -481,13 +491,15 @@ final class ChatOptimizer {
                     updated.errors[id] = probe.error
                     done += 1
                     progress?(done, entries.count)
+                    publish(id: id, seconds: nil, error: probe.error)
                 }
-                publish(ids: [id])
                 pump()
             }
         }
 
-        // Final publish: no id list, meaning "everything may have changed".
+        // Persist once at the end: the cache only needs to be durable between
+        // runs. Writing it per completion was a JSON encode + disk write on the
+        // main actor for every probe — pure cost, no benefit.
         writeLatencyCache(updated)
         NotificationCenter.default.post(name: ChatOptimizer.latencyUpdatedNotification, object: nil)
     }
@@ -500,6 +512,10 @@ final class ChatOptimizer {
     /// (the end of a run, or a wholesale cache reset).
     static let latencyUpdatedNotification = Notification.Name("chatOptimizer.latencyUpdated")
     static let latencyChangedIdsKey = "entryIds"
+    /// A live publish carries the measured value (Double) or the error (String)
+    /// for the named entry, so the picker never has to re-read the cache.
+    static let latencySecondsKey = "seconds"
+    static let latencyErrorKey = "error"
 
     /// Whether a probe failure means "the account is being throttled" rather
     /// than "this model is broken".

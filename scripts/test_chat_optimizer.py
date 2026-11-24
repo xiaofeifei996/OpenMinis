@@ -92,7 +92,7 @@ def main() -> int:
         ("throttle stops pumping", "guard !throttled else { return }"),
         ("throttle leaves no error on the entry", "updated.errors.removeValue(forKey: id)"),
         ("stale throttle errors are cleared before deciding", "cleared \\(staleThrottle.count) stale throttle error"),
-        ("manual test does not burst the gateway", "concurrency: 2"),
+        ("manual test runs the chosen concurrency", "concurrency: 6"),
     ]
     for name, needle in checks:
         found = needle in throttle or needle in PICKER.read_text()

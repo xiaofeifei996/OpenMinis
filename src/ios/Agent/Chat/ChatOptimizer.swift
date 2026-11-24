@@ -367,7 +367,12 @@ final class ChatOptimizer {
 
     /// Speed-test every available entry (respecting an overall budget), update
     /// the cache with the best latency seen per entry.
-    func speedTestAll(sessionId: String?, concurrency: Int = 2, perEntryTimeout: TimeInterval = 20,
+    // [T-speedtest-concurrency] 6 in flight: fast enough that a whole list
+    // finishes in seconds, and the throttle guard below now absorbs the
+    // gateway's 429 instead of recording every model as broken. Lower it here
+    // (and in the picker's manual button) if a provider starts answering 429
+    // on the very first probe.
+    func speedTestAll(sessionId: String?, concurrency: Int = 6, perEntryTimeout: TimeInterval = 20,
                       includeAllAccounts: Bool = false, progress: ((Int, Int) -> Void)? = nil) async {
         // [T-speedtest-all-accounts] The manual button passes includeAllAccounts:
         // true so every model of every account is measured (and previously failed

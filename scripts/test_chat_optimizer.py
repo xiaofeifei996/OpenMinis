@@ -13,6 +13,7 @@ Covers the parts that live across files and would silently regress:
 """
 from pathlib import Path
 import argparse
+import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,7 +54,7 @@ CHECKS = [
     (COMPOSER, "composer has the prompt-rewrite button", "optimizePromptButton"),
     (COMPOSER, "rewrite never overwrites text the user edited mid-flight", "if vm.inputText == original"),
     (COMPOSER, "a failed rewrite surfaces a toast", "systemImage: \"exclamationmark.triangle.fill\""),
-    (PICKER, "picker has the speed-test-all button", "测速所有模型"),
+    (PICKER, "picker has the speed-test-all button", "Speed-test all models"),
     (PICKER, "manual test covers every account", "includeAllAccounts: true"),
     (PICKER, "rows show a latency badge", "latencyBadgeText(for: entry)"),
     (PICKER, "rows show the failure marker as a soft signal", "latencyFailed(for: entry)"),
@@ -63,6 +64,7 @@ CHECKS = [
      "UserDefaults.standard.data(forKey: key)"),
     (PICKER, "latency results repaint the list", "latencyTick &+= 1"),
     (SETTINGS, "settings offers the auto-pick switch", "chatOptimizer.autoPickFastest"),
+    (SETTINGS, "settings section header is localizable", "Text(\"Chat Auto-Helpers\")"),
     (SETTINGS, "settings offers the auto-switch toggle", "chatOptimizer.autoSwitchUnavailable"),
     (SETTINGS, "settings offers the retry toggle", "chatOptimizer.autoRetryOnTimeout"),
 ]
@@ -81,6 +83,27 @@ def main() -> int:
         ok &= found
 
     # The soft-fail contract: a probe failure must not mark an entry unavailable.
+    # Every user-visible string must be a localizable English key, not a
+    # Chinese or other literal the catalog cannot resolve.
+    han = re.compile("[\u4e00-\u9fff]")
+    code_files = [OPT, COMPOSER, PICKER, SETTINGS, SEND]
+    bad = []
+    for f in code_files:
+        for i, line in enumerate(f.read_text().splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("//") or stripped.startswith("///"):
+                continue
+            # Prompt bodies handed to the model are data, not UI copy.
+            if "你是一个提示词优化助手" in line or "用原文所用的语言" in line:
+                continue
+            if han.search(line) and ("Text(" in line or "AppLocalized(" in line
+                                      or "accessibilityLabel(" in line):
+                bad.append(f"{f.name}:{i}: {stripped[:70]}")
+    print(("PASS" if not bad else "FAIL") + ": UI strings use localizable English keys")
+    for b in bad:
+        print("   ", b)
+    ok &= not bad
+
     opt = OPT.read_text()
     softened = "updated.unavailable.append" not in opt and "unavailable[id]" not in opt
     print(("PASS" if softened else "FAIL") + ": no speed-test path hard-excludes a model")

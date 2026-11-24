@@ -924,7 +924,7 @@ struct UnifiedModelPicker: View {
                     }
                 }
                 .disabled(speedTestingAll)
-                .accessibilityLabel(Text("测速所有模型"))
+                .accessibilityLabel(Text("Speed-test all models"))
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Done") { dismiss() }

@@ -99,7 +99,7 @@ extension AIChatView {
                 .frame(width: 34, height: 34)
         }
         .disabled(optimizingPrompt || vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        .accessibilityLabel(Text("优化词条"))
+        .accessibilityLabel(Text("Rewrite prompt"))
     }
 
     @MainActor

@@ -241,7 +241,7 @@ struct SettingsSheet: View {
                 } header: {
                     Text("Chat Auto-Helpers")
                 } footer: {
-                    Text("The 优化词条 button beside the composer rewrites your text into a clearer prompt. Speed testing measures each model's first-token latency so this page and the model picker can show it.")
+                    Text("The rewrite button beside the composer turns your text into a clearer prompt. Speed testing measures each model's first-token latency so this page and the model picker can show it.")
                 }
 
                 Section("Storage") {

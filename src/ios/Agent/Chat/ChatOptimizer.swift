@@ -52,9 +52,9 @@ enum ChatOptimizerError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .rewriteFailed(let underlying):
-            return String(format: NSLocalizedString("提示词优化失败：%@", comment: "optimize rewrite failure"), underlying.localizedDescription)
+            return String(format: AppLocalized("Prompt rewrite failed: %@", comment: "optimize rewrite failure"), underlying.localizedDescription)
         case .emptyRewrite:
-            return NSLocalizedString("提示词优化未返回结果", comment: "optimize returned nothing")
+            return AppLocalized("The rewrite returned nothing.", comment: "optimize returned nothing")
         }
     }
 }
@@ -200,6 +200,13 @@ final class ChatOptimizer {
         - 补充必要的结构（如目标、约束、输出格式、语气）；
         - 删除口语化废话；
         - 保持简洁，尽量不超过原文的两倍长度；直接输出改写结果，不要解释、不要前后缀。
+        - 用原文所用的语言改写：原文是中文就用中文，其他语言就用该语言。
+
+        You are a prompt-rewrite assistant. Rewrite the user's instruction into a
+        clearer, more precise prompt: keep the intent, add useful structure (goal,
+        constraints, output format, tone), drop filler, stay under twice the
+        original length, and output ONLY the rewritten prompt with no preamble.
+        Write the result in the SAME language as the original text.
         """
         let messages: [LLMMessage] = [LLMMessage(role: .user, content: trimmed)]
         let provider = try await LLMProviderFactory.makeProvider(

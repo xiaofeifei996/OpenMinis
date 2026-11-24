@@ -383,21 +383,18 @@ final class ChatOptimizer {
         let cache = readLatencyCache()
         var updated = cache
 
-        // [T-speedtest-live-update] Publish while the run is in flight so rows
-        // fill in as they are measured instead of all at once at the end.
-        // Coalesced to at most one publish per `publishInterval`: a publish
-        // writes the whole cache and re-renders every row, and at concurrency 6
-        // a burst of completions would otherwise fire a dozen re-renders in one
-        // frame — the same stutter the badge-table change fixed on the read
-        // side. The final publish after the loop always runs.
-        let publishInterval: TimeInterval = 0.35
-        var lastPublish = Date.distantPast
-        func publishIfDue() {
-            let now = Date()
-            guard now.timeIntervalSince(lastPublish) >= publishInterval else { return }
-            lastPublish = now
+        // [T-speedtest-live-update] Publish as each probe lands so rows fill in
+        // progressively. The notification names the entries that actually
+        // changed, and the picker patches only those rows — that is what makes
+        // a per-completion publish affordable. Repainting the whole list on
+        // every completion is what forced a 0.35 s throttle before, and the
+        // throttle is what made updates look laggy.
+        func publish(ids: [String]) {
             writeLatencyCache(updated)
-            NotificationCenter.default.post(name: ChatOptimizer.latencyUpdatedNotification, object: nil)
+            NotificationCenter.default.post(
+                name: ChatOptimizer.latencyUpdatedNotification,
+                object: nil,
+                userInfo: [ChatOptimizer.latencyChangedIdsKey: ids])
         }
 
         // Run with bounded concurrency.
@@ -445,17 +442,25 @@ final class ChatOptimizer {
                 }
                 done += 1
                 progress?(done, entries.count)
-                publishIfDue()
+                // One publish per completed probe: the picker patches this one
+                // row, so there is nothing to coalesce.
+                publish(ids: [id])
                 pump()
             }
         }
+        // Final publish: no id list, meaning "everything may have changed".
         writeLatencyCache(updated)
-        // Notify UI so the model picker badges repaint with fresh latencies.
         NotificationCenter.default.post(name: ChatOptimizer.latencyUpdatedNotification, object: nil)
     }
 
     /// Posted after a background speed test finishes so list rows can refresh.
+    ///
+    /// [T-speedtest-live-update] `userInfo` may carry
+    /// `latencyChangedIdsKey` — the entry ids this publish touched. The picker
+    /// patches just those rows; an absent list means "re-read everything"
+    /// (the end of a run, or a wholesale cache reset).
     static let latencyUpdatedNotification = Notification.Name("chatOptimizer.latencyUpdated")
+    static let latencyChangedIdsKey = "entryIds"
 
     /// Whether a probe failure means "the account is being throttled" rather
     /// than "this model is broken".

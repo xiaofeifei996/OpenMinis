@@ -294,6 +294,16 @@ struct UnifiedModelPicker: View {
     /// fresh latency badges (the cache lives in UserDefaults, not in @State).
     @State private var latencyTick: Int = 0
 
+    /// [T-speedtest-live-update] The badge values the rendered rows read.
+    ///
+    /// Held in `@State` so a publish can patch a single entry without
+    /// invalidating the whole list: SwiftUI re-runs only the rows whose
+    /// dependency (their own id's value) changed. Reading the cache lazily from
+    /// `body` would make every row depend on one blob, and any change would
+    /// then re-render all of them.
+    @State private var latencySeconds: [String: Double] = [:]
+    @State private var latencyFailedIds: Set<String> = []
+
     /// [T-picker-provider-edit] Identifiable wrapper so `.sheet(item:)` can drive
     /// the provider detail page.
     struct ProviderEditTarget: Identifiable, Equatable { let id: String }
@@ -590,10 +600,11 @@ struct UnifiedModelPicker: View {
         // observer of the speed-test cache, so rows repaint when a background
         // test finishes (the cache itself lives in UserDefaults, not in @State).
         let _ = latencyTick
-        // [T-speedtest-scroll-jank] Decode the badge table ONCE for this body,
-        // then hand the cheap value to every row. Decoding inside each row ran
-        // a full JSON parse per row per frame (see LatencyBadges).
-        let badges = Self.currentLatencyBadges()
+        // [T-speedtest-scroll-jank] Rows read the badge tables once per body,
+        // not once per row: decoding inside each row ran a full JSON parse per
+        // row per frame. [T-speedtest-live-update] The tables themselves live in
+        // @State so a single-entry publish patches one row.
+        let badges = LatencyBadges(seconds: latencySeconds, failed: latencyFailedIds)
         List {
             if let note = config.headerNote {
                 Section {
@@ -732,8 +743,21 @@ struct UnifiedModelPicker: View {
             let sid = config.currentSessionId?()
             Task { await ChatOptimizer.shared.ensureLatencyDataOnce(sessionId: sid) }
         }
-        .onReceive(NotificationCenter.default.publisher(for: ChatOptimizer.latencyUpdatedNotification)) { _ in
-            latencyTick &+= 1
+        .onReceive(NotificationCenter.default.publisher(for: ChatOptimizer.latencyUpdatedNotification)) { note in
+            // [T-speedtest-live-update] A publish that names its entries is
+            // patched into the badge tables in place: only the rows whose
+            // values actually changed re-render, so one publish per completed
+            // probe is cheap. A publish with no id list (end of a run, cache
+            // reset) falls back to a full re-read.
+            let ids = note.userInfo?[ChatOptimizer.latencyChangedIdsKey] as? [String]
+            if let ids, !ids.isEmpty, let refreshed = Self.currentLatencyBadges(restrictedTo: ids) {
+                latencySeconds.merge(refreshed.seconds) { _, new in new }
+                latencyFailedIds.formUnion(refreshed.failed)
+                latencyFailedIds.subtract(refreshed.cleared)
+            } else {
+                adoptLatencyBadges(Self.currentLatencyBadges())
+                latencyTick &+= 1
+            }
         }
         .onDisappear { refreshTask?.cancel() }
         .onChange(of: sections == nil) { _ in seedCollapse() }
@@ -1420,7 +1444,13 @@ struct UnifiedModelPicker: View {
         let visibleEntries = isCollapsed ? collapsedEntry : item.entries
         Section {
             ForEach(visibleEntries) { entry in
-                entryRow(entry, latency: badges)
+                // [T-speedtest-live-update] Resolve THIS row's badge here, as
+                // plain values. Passing the whole table would make every row
+                // depend on it, so one entry's change would re-render all of
+                // them; two `Equatable` values keep the dependency per-row.
+                entryRow(entry,
+                         latencyText: badges.text(for: entry.id),
+                         latencyFailed: badges.isFailed(entry.id))
             }
             if isCollapsed && item.entries.count > 1 {
                 Button {
@@ -1499,7 +1529,9 @@ struct UnifiedModelPicker: View {
 
     // MARK: - Entry Row
 
-    private func entryRow(_ entry: ModelEntry, latency: LatencyBadges) -> some View {
+    private func entryRow(_ entry: ModelEntry,
+                          latencyText: String?,
+                          latencyFailed: Bool) -> some View {
         let disabled = config.isDisabled?(entry) ?? false
         let traits = entry.displayTraits
         let isSelected: Bool = {
@@ -1572,7 +1604,7 @@ struct UnifiedModelPicker: View {
 
                 // [T-latency-order] Match reference build: latency badge / red-x on
                 // the left, wifi icon rightmost.
-                if let ms = latency.text(for: entry.id) {
+                if let ms = latencyText {
                     Text(ms)
                         .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(.secondary)
@@ -1580,7 +1612,7 @@ struct UnifiedModelPicker: View {
                         .padding(.vertical, 1)
                         .background(Color(UIColor.tertiarySystemFill))
                         .clipShape(RoundedRectangle(cornerRadius: 3))
-                } else if latency.isFailed(entry.id) {
+                } else if latencyFailed {
                     // 测速失败（软信号）：红✗标记，但模型仍可用。
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 11, weight: .semibold))
@@ -1645,9 +1677,12 @@ struct UnifiedModelPicker: View {
     /// (the notification fires and re-renders everything mid-scroll).
     ///
     /// One decode per body evaluation, then cheap dictionary lookups per row.
-    private struct LatencyBadges {
+    struct LatencyBadges {
         var seconds: [String: Double] = [:]
         var failed: Set<String> = []
+        /// Ids this read found to be NOT failed — a stale red cross the cache no
+        /// longer agrees with, so an incremental patch can clear it.
+        var cleared: Set<String> = []
 
         func text(for entryId: String) -> String? {
             guard let s = seconds[entryId] else { return nil }
@@ -1672,6 +1707,24 @@ struct UnifiedModelPicker: View {
         badges.seconds = cache.entries
         badges.failed = Set(cache.errors.keys)
         return badges
+    }
+
+    /// [T-speedtest-live-update] The same read, narrowed to `ids`, plus the ids
+    /// among them that are no longer failed. Used to patch single rows.
+    private static func currentLatencyBadges(restrictedTo ids: [String]) -> LatencyBadges {
+        let all = currentLatencyBadges()
+        var badges = LatencyBadges()
+        for id in ids {
+            if let s = all.seconds[id] { badges.seconds[id] = s }
+            if all.failed.contains(id) { badges.failed.insert(id) } else { badges.cleared.insert(id) }
+        }
+        return badges
+    }
+
+    /// Adopt a whole read (start of a run, or a full refresh).
+    private func adoptLatencyBadges(_ badges: LatencyBadges) {
+        latencySeconds = badges.seconds
+        latencyFailedIds = badges.failed
     }
 
     /// [T-speedtest-unavailable] Grey wifi ONLY when the provider has delisted the

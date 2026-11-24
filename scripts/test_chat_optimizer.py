@@ -105,7 +105,7 @@ def main() -> int:
         ("other providers keep going", "return now >= until"),
         ("a throttled row is retried once", "queue.append(original)"),
         ("stale throttle errors are cleared before deciding", "cleared \\(staleThrottle.count) stale throttle error"),
-        ("manual test runs the chosen concurrency", "concurrency: 6"),
+        ("manual test runs serially so results appear one by one", "concurrency: 1,"),
     ]
     for name, needle in checks:
         found = needle in throttle or needle in PICKER.read_text()

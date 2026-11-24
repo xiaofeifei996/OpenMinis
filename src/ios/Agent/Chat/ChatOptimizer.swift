@@ -494,6 +494,13 @@ final class ChatOptimizer {
                     publish(id: id, seconds: nil, error: probe.error)
                 }
                 pump()
+                // [T-speedtest-live-update] Yield to the main actor between
+                // probes: the whole run is @MainActor-isolated (provider setup
+                // and stream parsing included), so without this the next probe
+                // starts before SwiftUI gets a chance to draw the row we just
+                // published — which is exactly what "not in real time" looked
+                // like. One yield per completion is free.
+                await Task.yield()
             }
         }
 
@@ -725,7 +732,10 @@ final class ChatOptimizer {
             logger.info("[latency] cleared \(staleThrottle.count) stale throttle error(s)")
         }
         guard cache.entries.isEmpty else { return }
-        await speedTestAll(sessionId: sessionId)
+        // [T-speedtest-sequential] Serial here too: this fires on the picker's
+        // first appear, and 6 concurrent probes on the main actor made that
+        // first open stutter before the user even asked for a test.
+        await speedTestAll(sessionId: sessionId, concurrency: 1)
     }
 
     /// Public read-only view of the latency cache for UI (model picker badges).

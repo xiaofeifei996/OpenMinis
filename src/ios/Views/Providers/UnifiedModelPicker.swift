@@ -737,6 +737,11 @@ struct UnifiedModelPicker: View {
             loadSections()
             seedCollapse()
             SystemVoiceCatalog.startObservingVoiceChanges()
+            // [T-speedtest-live-update] Seed the badge tables from whatever the
+            // cache already holds, so a picker opened mid-run (or after one)
+            // shows the measured values immediately instead of after the next
+            // publish.
+            adoptLatencyBadges(Self.currentLatencyBadges())
             // [T-optimize-prompt] One-shot background speed test so latency badges
             // populate without blocking the picker. Non-blocking; results are cached
             // and the rows re-render via the latencyUpdated notification.
@@ -750,7 +755,8 @@ struct UnifiedModelPicker: View {
             // probe is cheap. A publish with no id list (end of a run, cache
             // reset) falls back to a full re-read.
             let ids = note.userInfo?[ChatOptimizer.latencyChangedIdsKey] as? [String]
-            if let ids, !ids.isEmpty, let refreshed = Self.currentLatencyBadges(restrictedTo: ids) {
+            if let ids, !ids.isEmpty {
+                let refreshed = Self.currentLatencyBadges(restrictedTo: ids)
                 latencySeconds.merge(refreshed.seconds) { _, new in new }
                 latencyFailedIds.formUnion(refreshed.failed)
                 latencyFailedIds.subtract(refreshed.cleared)

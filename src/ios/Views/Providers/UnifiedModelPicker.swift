@@ -287,22 +287,20 @@ struct UnifiedModelPicker: View {
     /// [T-quota-badge-ui] The provider whose quota detail sheet is open from its
     /// header pill. Hosted here like `editingProvider`, not on the header.
     @State private var quotaDetailProvider: ProviderEditTarget?
-    /// [T-quick-speedtest] Manual "speed test all models" state (toolbar button).
-    @State private var speedTestingAll: Bool = false
-    @State private var speedTestProgress: String?
-    /// Bumped when a background speed test finishes, so rows repaint with the
-    /// fresh latency badges (the cache lives in UserDefaults, not in @State).
-    @State private var latencyTick: Int = 0
-
-    /// [T-speedtest-live-update] The badge values the rendered rows read.
+    /// [T-speedtest-live-update] Live speed-test state lives in REFERENCE types
+    /// so writing it does not invalidate the list body.
     ///
-    /// Held in `@State` so a publish can patch a single entry without
-    /// invalidating the whole list: SwiftUI re-runs only the rows whose
-    /// dependency (their own id's value) changed. Reading the cache lazily from
-    /// `body` would make every row depend on one blob, and any change would
-    /// then re-render all of them.
-    @State private var latencySeconds: [String: Double] = [:]
-    @State private var latencyFailedIds: Set<String> = []
+    /// These were `@State` read inside `body`: every publish rebuilt the whole
+    /// list (hundreds of rows) and every progress tick did the same through the
+    /// toolbar, so a 60-model run meant ~120 full-list rebuilds. Now `body`
+    /// reads neither object — only the badge cells and the toolbar button
+    /// observe them, so an update repaints a handful of small views.
+    // `@State` (not `@StateObject`): `@StateObject` subscribes the DECLARING
+    // view to objectWillChange, so a publish would invalidate this whole view
+    // again. `@State` only holds the reference; the observing happens in the
+    // leaves that take it as `@ObservedObject`.
+    @State private var speedStatus = SpeedTestStatus()
+    @State private var badges = LatencyBadgeStore()
 
     /// [T-picker-provider-edit] Identifiable wrapper so `.sheet(item:)` can drive
     /// the provider detail page.
@@ -599,11 +597,10 @@ struct UnifiedModelPicker: View {
         // [T-optimize-prompt] Reading the latency tick registers this view as an
         // observer of the speed-test cache, so rows repaint when a background
         // test finishes (the cache itself lives in UserDefaults, not in @State).
-        // [T-speedtest-live-update] One lookup per row from these tables; the
-        // row's badge view is `Equatable`, so SwiftUI skips re-rendering every
-        // row whose own two values did not change. Without that, one entry's
-        // value invalidates the whole list on every publish.
-        let badges = LatencyBadges(seconds: latencySeconds, failed: latencyFailedIds)
+        // [T-speedtest-live-update] `body` deliberately reads NO speed-test
+        // state: the badges live in `badges` (observed by each cell) and the
+        // toolbar progress in `speedStatus`. That keeps the list itself out of
+        // the update path entirely.
         List {
             if let note = config.headerNote {
                 Section {
@@ -660,7 +657,7 @@ struct UnifiedModelPicker: View {
             // [T-picker-search-cap] Render the capped list; the footer below
             // says so when matches were truncated.
             ForEach(cappedEntriesByInstance, id: \.instance.id) { item in
-                instanceSection(item, badges: badges)
+                instanceSection(item)
             }
             if !debouncedSearch.isEmpty, totalSearchMatches > Self.maxSearchResults {
                 Section {
@@ -740,7 +737,7 @@ struct UnifiedModelPicker: View {
             // cache already holds, so a picker opened mid-run (or after one)
             // shows the measured values immediately instead of after the next
             // publish.
-            adoptLatencyBadges(Self.currentLatencyBadges())
+            badges.adopt(Self.currentLatencyBadges())
             // [T-optimize-prompt] One-shot background speed test so latency badges
             // populate without blocking the picker. Non-blocking; results are cached
             // and the rows re-render via the latencyUpdated notification.
@@ -756,27 +753,12 @@ struct UnifiedModelPicker: View {
             // thread while the list is being scrolled.
             let ids = note.userInfo?[ChatOptimizer.latencyChangedIdsKey] as? [String]
             guard let ids, !ids.isEmpty else {
-                // No id list: the whole cache may have changed.
-                adoptLatencyBadges(Self.currentLatencyBadges())
-                latencyTick &+= 1
+                badges.adopt(Self.currentLatencyBadges())
                 return
             }
             let seconds = note.userInfo?[ChatOptimizer.latencySecondsKey] as? Double
             let error = note.userInfo?[ChatOptimizer.latencyErrorKey] as? String
-            for id in ids {
-                if let seconds {
-                    latencySeconds[id] = seconds
-                    latencyFailedIds.remove(id)
-                } else if let error {
-                    latencySeconds.removeValue(forKey: id)
-                    latencyFailedIds.insert(id)
-                } else {
-                    // Throttled or unmeasurable: leave the row alone rather than
-                    // inventing a value for it.
-                    latencySeconds.removeValue(forKey: id)
-                    latencyFailedIds.remove(id)
-                }
-            }
+            badges.apply(ids: ids, seconds: seconds, error: error)
         }
         .onDisappear { refreshTask?.cancel() }
         .onChange(of: sections == nil) { _ in seedCollapse() }
@@ -942,36 +924,25 @@ struct UnifiedModelPicker: View {
             // Tests EVERY model of EVERY account (not just the ones the agent
             // would auto-pick), and retries models that failed before.
             ToolbarItem(placement: .topBarLeading) {
-                Button {
+                // Whole button lives in a subview that observes `speedStatus`, so
+                // this body never reads `running`/`progress`.
+                SpeedTestButton(status: speedStatus) {
                     Task { @MainActor in
-                        speedTestingAll = true
-                        speedTestProgress = nil
+                        speedStatus.running = true
+                        speedStatus.progress = nil
                         let sid = config.currentSessionId?()
                         await ChatOptimizer.shared.speedTestAll(
                             sessionId: sid,
                             concurrency: 6,
                             includeAllAccounts: true,
                             progress: { done, total in
-                                Task { @MainActor in speedTestProgress = "\(done)/\(total)" }
+                                speedStatus.progress = "\(done)/\(total)"
                             }
                         )
-                        speedTestingAll = false
-                        speedTestProgress = nil
-                    }
-                } label: {
-                    if speedTestingAll {
-                        HStack(spacing: 4) {
-                            ProgressView().controlSize(.small)
-                            if let p = speedTestProgress {
-                                Text(p).font(.caption2.monospacedDigit())
-                            }
-                        }
-                    } else {
-                        Image(systemName: "speedometer")
+                        speedStatus.running = false
+                        speedStatus.progress = nil
                     }
                 }
-                .disabled(speedTestingAll)
-                .accessibilityLabel(Text("Speed-test all models"))
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Done") { dismiss() }
@@ -1441,8 +1412,7 @@ struct UnifiedModelPicker: View {
     // MARK: - Instance Section
 
     @ViewBuilder
-    private func instanceSection(_ item: (instance: ProviderInstance, entries: [ModelEntry]),
-                                 badges: LatencyBadges) -> some View {
+    private func instanceSection(_ item: (instance: ProviderInstance, entries: [ModelEntry])) -> some View {
         let isCollapsed = searchText.isEmpty && collapsedInstanceIds.contains(item.instance.id)
         // When collapsed, surface the currently-selected entry (if it lives in
         // this section) rather than blindly the first — so the active model stays
@@ -1463,10 +1433,9 @@ struct UnifiedModelPicker: View {
         let visibleEntries = isCollapsed ? collapsedEntry : item.entries
         Section {
             ForEach(visibleEntries) { entry in
-                // [T-speedtest-live-update] Two plain values, one per row.
-                entryRow(entry,
-                         latencyText: badges.text(for: entry.id),
-                         latencyFailed: badges.isFailed(entry.id))
+                // [T-speedtest-live-update] The cell observes the store itself;
+                // this call only hands over a reference, it reads no value.
+                entryRow(entry)
             }
             if isCollapsed && item.entries.count > 1 {
                 Button {
@@ -1545,9 +1514,7 @@ struct UnifiedModelPicker: View {
 
     // MARK: - Entry Row
 
-    private func entryRow(_ entry: ModelEntry,
-                          latencyText: String?,
-                          latencyFailed: Bool) -> some View {
+    private func entryRow(_ entry: ModelEntry) -> some View {
         let disabled = config.isDisabled?(entry) ?? false
         let traits = entry.displayTraits
         let isSelected: Bool = {
@@ -1622,7 +1589,7 @@ struct UnifiedModelPicker: View {
                 // the left, wifi icon rightmost.
                 // [T-speedtest-live-update] Its own view so only this row reacts
                 // to this entry's value.
-                LatencyBadgeView(text: latencyText, failed: latencyFailed).equatable()
+                LatencyBadgeCell(store: badges, entryId: entry.id)
 
                 // [T-optimize-prompt] Availability wifi icon on the trailing edge.
                 // Green = reachable; grey = unavailable (provider delisted it).
@@ -1670,20 +1637,17 @@ struct UnifiedModelPicker: View {
         }
     }
 
-    /// One row's latency badge.
-    ///
-    /// [T-speedtest-live-update] `Equatable` on purpose: SwiftUI compares the
-    /// two values and skips this view's body when they did not change, so a
-    /// publish for one entry only renders that entry's badge. Passing the
-    /// tables straight in made every row re-evaluate on every publish, which is
-    /// what kept progress from appearing smoothly and what janked scrolling.
-    private struct LatencyBadgeView: View, Equatable {
-        let text: String?
-        let failed: Bool
-
-        static func == (a: Self, b: Self) -> Bool { a.text == b.text && a.failed == b.failed }
+    /// One row's latency badge — a leaf that observes the shared store.
+    private struct LatencyBadgeCell: View {
+        @ObservedObject var store: LatencyBadgeStore
+        let entryId: String
 
         var body: some View {
+            // Reading only this entry's slot. The observed object changes on any
+            // publish, but this cell is a leaf: SwiftUI re-evaluates a handful of
+            // visible cells, never the surrounding list.
+            let text = store.text(for: entryId)
+            let failed = store.isFailed(entryId)
             Group {
                 if let text {
                     Text(text)
@@ -1704,6 +1668,83 @@ struct UnifiedModelPicker: View {
         }
     }
 
+    /// Live latency tables for the model list.
+    ///
+    /// [T-speedtest-live-update] A REFERENCE type on purpose: rows observe it
+    /// through `@ObservedObject` leaves, so a publish repaints the visible badge
+    /// cells instead of invalidating the whole list. As `@State` (the previous
+    /// shape) every value write re-ran `body` and rebuilt every row.
+    final class LatencyBadgeStore: ObservableObject {
+        @Published private(set) var seconds: [String: Double] = [:]
+        @Published private(set) var failed: Set<String> = []
+
+        func text(for entryId: String) -> String? {
+            guard let s = seconds[entryId] else { return nil }
+            return String(format: "%.1fs", s)
+        }
+
+        /// A measured latency wins over a stale error for the same id.
+        func isFailed(_ entryId: String) -> Bool {
+            failed.contains(entryId) && seconds[entryId] == nil
+        }
+
+        func adopt(_ badges: LatencyBadges) {
+            seconds = badges.seconds
+            failed = badges.failed
+        }
+
+        /// Patch the named rows from one publish. `seconds`/`error` nil means the
+        /// row was throttled or unmeasurable — clear it without inventing a value.
+        func apply(ids: [String], seconds value: Double?, error: String?) {
+            var s = seconds
+            var f = failed
+            for id in ids {
+                if let value {
+                    s[id] = value
+                    f.remove(id)
+                } else if let error {
+                    f.insert(id)
+                    s.removeValue(forKey: id)
+                } else {
+                    s.removeValue(forKey: id)
+                    f.remove(id)
+                }
+            }
+            seconds = s
+            failed = f
+        }
+    }
+
+    /// Toolbar state for the manual "speed test all" run.
+    final class SpeedTestStatus: ObservableObject {
+        @Published var running = false
+        @Published var progress: String?
+    }
+
+    /// The manual speed-test toolbar button. Observes `speedStatus` itself so a
+    /// progress tick repaints only this button, not the model list behind it.
+    private struct SpeedTestButton: View {
+        @ObservedObject var status: SpeedTestStatus
+        let action: () -> Void
+
+        var body: some View {
+            Button(action: action) {
+                if status.running {
+                    HStack(spacing: 4) {
+                        ProgressView().controlSize(.small)
+                        if let p = status.progress {
+                            Text(p).font(.caption2.monospacedDigit())
+                        }
+                    }
+                } else {
+                    Image(systemName: "speedometer")
+                }
+            }
+            .disabled(status.running)
+            .accessibilityLabel(Text("Speed-test all models"))
+        }
+    }
+
     /// Latency badges for the whole list, decoded ONCE per render pass.
     ///
     /// [T-speedtest-scroll-jank] This used to be two helpers that each read the
@@ -1718,9 +1759,6 @@ struct UnifiedModelPicker: View {
     struct LatencyBadges {
         var seconds: [String: Double] = [:]
         var failed: Set<String> = []
-        /// Ids this read found to be NOT failed — a stale red cross the cache no
-        /// longer agrees with, so an incremental patch can clear it.
-        var cleared: Set<String> = []
 
         func text(for entryId: String) -> String? {
             guard let s = seconds[entryId] else { return nil }
@@ -1747,24 +1785,7 @@ struct UnifiedModelPicker: View {
         return badges
     }
 
-    /// [T-speedtest-live-update] The same read, narrowed to `ids`, plus the ids
-    /// among them that are no longer failed. Used to patch single rows.
-    private static func currentLatencyBadges(restrictedTo ids: [String]) -> LatencyBadges {
-        let all = currentLatencyBadges()
-        var badges = LatencyBadges()
-        for id in ids {
-            if let s = all.seconds[id] { badges.seconds[id] = s }
-            if all.failed.contains(id) { badges.failed.insert(id) } else { badges.cleared.insert(id) }
-        }
-        return badges
-    }
-
     /// Adopt a whole read (start of a run, or a full refresh).
-    private func adoptLatencyBadges(_ badges: LatencyBadges) {
-        latencySeconds = badges.seconds
-        latencyFailedIds = badges.failed
-    }
-
     /// [T-speedtest-unavailable] Grey wifi ONLY when the provider has delisted the
     /// model. A failed speed test is a SOFT signal (transient network/auth blip)
     /// and must NOT grey out a model the user knows works — so `errors` never

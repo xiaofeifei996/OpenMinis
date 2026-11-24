@@ -933,7 +933,11 @@ struct UnifiedModelPicker: View {
                         let sid = config.currentSessionId?()
                         await ChatOptimizer.shared.speedTestAll(
                             sessionId: sid,
-                            concurrency: 6,
+                            // [T-speedtest-sequential] One probe at a time so each
+                            // model's latency appears AS SOON AS it finishes. With
+                            // 6 in flight the completions land together and the
+                            // list fills in jumps; the user asked for one-by-one.
+                            concurrency: 1,
                             includeAllAccounts: true,
                             progress: { done, total in
                                 speedStatus.progress = "\(done)/\(total)"

@@ -102,6 +102,9 @@ struct ModelPickerConfig {
 
     var currentEntryId: (@MainActor () -> String?)?
     var currentGroupId: (@MainActor () -> String?)?
+    /// Real session id, used for background latency speed-tests (OpenCode models
+    /// need a session or the request fails). Passed through from the owning view.
+    var currentSessionId: (@MainActor () -> String?)?
 
     var onSelect: (@MainActor (ModelEntry) -> Void)?
     var onSelectGroup: (@MainActor (ModelGroup) -> Void)?
@@ -284,6 +287,12 @@ struct UnifiedModelPicker: View {
     /// [T-quota-badge-ui] The provider whose quota detail sheet is open from its
     /// header pill. Hosted here like `editingProvider`, not on the header.
     @State private var quotaDetailProvider: ProviderEditTarget?
+    /// [T-quick-speedtest] Manual "speed test all models" state (toolbar button).
+    @State private var speedTestingAll: Bool = false
+    @State private var speedTestProgress: String?
+    /// Bumped when a background speed test finishes, so rows repaint with the
+    /// fresh latency badges (the cache lives in UserDefaults, not in @State).
+    @State private var latencyTick: Int = 0
 
     /// [T-picker-provider-edit] Identifiable wrapper so `.sheet(item:)` can drive
     /// the provider detail page.
@@ -577,6 +586,10 @@ struct UnifiedModelPicker: View {
     // MARK: - Body
 
     var body: some View {
+        // [T-optimize-prompt] Reading the latency tick registers this view as an
+        // observer of the speed-test cache, so rows repaint when a background
+        // test finishes (the cache itself lives in UserDefaults, not in @State).
+        let _ = latencyTick
         List {
             if let note = config.headerNote {
                 Section {
@@ -709,6 +722,14 @@ struct UnifiedModelPicker: View {
             loadSections()
             seedCollapse()
             SystemVoiceCatalog.startObservingVoiceChanges()
+            // [T-optimize-prompt] One-shot background speed test so latency badges
+            // populate without blocking the picker. Non-blocking; results are cached
+            // and the rows re-render via the latencyUpdated notification.
+            let sid = config.currentSessionId?()
+            Task { await ChatOptimizer.shared.ensureLatencyDataOnce(sessionId: sid) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ChatOptimizer.latencyUpdatedNotification)) { _ in
+            latencyTick &+= 1
         }
         .onDisappear { refreshTask?.cancel() }
         .onChange(of: sections == nil) { _ in seedCollapse() }
@@ -870,6 +891,41 @@ struct UnifiedModelPicker: View {
                 .disabled(selectedEntryIds.isEmpty)
             }
         } else {
+            // [T-quick-speedtest] Manual "speed test all models" button (top-left).
+            // Tests EVERY model of EVERY account (not just the ones the agent
+            // would auto-pick), and retries models that failed before.
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    Task { @MainActor in
+                        speedTestingAll = true
+                        speedTestProgress = nil
+                        let sid = config.currentSessionId?()
+                        await ChatOptimizer.shared.speedTestAll(
+                            sessionId: sid,
+                            concurrency: 6,
+                            includeAllAccounts: true,
+                            progress: { done, total in
+                                Task { @MainActor in speedTestProgress = "\(done)/\(total)" }
+                            }
+                        )
+                        speedTestingAll = false
+                        speedTestProgress = nil
+                    }
+                } label: {
+                    if speedTestingAll {
+                        HStack(spacing: 4) {
+                            ProgressView().controlSize(.small)
+                            if let p = speedTestProgress {
+                                Text(p).font(.caption2.monospacedDigit())
+                            }
+                        }
+                    } else {
+                        Image(systemName: "speedometer")
+                    }
+                }
+                .disabled(speedTestingAll)
+                .accessibilityLabel(Text("测速所有模型"))
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Done") { dismiss() }
             }
@@ -1509,6 +1565,31 @@ struct UnifiedModelPicker: View {
                 // column takes the free width instead of a Spacer.
                 .frame(maxWidth: .infinity, alignment: .leading)
 
+                // [T-latency-order] Match reference build: latency badge / red-x on
+                // the left, wifi icon rightmost.
+                if let ms = latencyBadgeText(for: entry) {
+                    Text(ms)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color(UIColor.tertiarySystemFill))
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                } else if latencyFailed(for: entry) {
+                    // 测速失败（软信号）：红✗标记，但模型仍可用。
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.red)
+                        .frame(width: 18)
+                }
+
+                // [T-optimize-prompt] Availability wifi icon on the trailing edge.
+                // Green = reachable; grey = unavailable (provider delisted it).
+                Image(systemName: "wifi")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(isEntryUnavailable(entry) ? Color(UIColor.tertiaryLabel) : Color.green)
+                    .frame(width: 18)
+
                 quickTestButton(entry)
         }
         .opacity(disabled ? 0.6 : 1)
@@ -1546,6 +1627,36 @@ struct UnifiedModelPicker: View {
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
+    }
+
+    /// Latency badge text (e.g. "1.4s") for an entry, or nil when untested.
+    /// Reads the latency cache directly from UserDefaults (where ChatOptimizer
+    /// persists it) so this non-isolated view helper stays off the MainActor.
+    /// [T-speedtest-unavailable] Grey wifi ONLY when the provider has delisted the
+    /// model. A failed speed test is a SOFT signal (transient network/auth blip)
+    /// and must NOT grey out a model the user knows works — so we no longer read
+    /// `errors` here. The latency badge still shows a short failure hint, but the
+    /// wifi stays green for any provider-listed model.
+    private func isEntryUnavailable(_ entry: ModelEntry) -> Bool {
+        entry.isUnavailableFromProvider
+    }
+
+    private func latencyBadgeText(for entry: ModelEntry) -> String? {
+        let key = "chatOptimizer.latencyCache"
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let cache = try? JSONDecoder().decode(ModelLatencyCache.self, from: data) else { return nil }
+        if let seconds = cache.entries[entry.id] {
+            return String(format: "%.1fs", seconds)
+        }
+        return nil
+    }
+
+    /// 测速失败（软信号）：用红✗标记，但模型仍可用、不灰化。
+    private func latencyFailed(for entry: ModelEntry) -> Bool {
+        let key = "chatOptimizer.latencyCache"
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let cache = try? JSONDecoder().decode(ModelLatencyCache.self, from: data) else { return false }
+        return cache.errors[entry.id] != nil && cache.entries[entry.id] == nil
     }
 
     /// Modality tags and the "unavailable" tag, as HStack children.

@@ -39,6 +39,7 @@ jobs:
         run: |
           set -euo pipefail
           for file in \
+            src/ios/Agent/Chat/ChatOptimizer.swift \
             src/ios/Agent/Chat/ChatModels.swift \
             src/ios/Agent/Chat/AIChatViewModel+Fallback.swift \
             src/ios/Agent/Chat/AIChatViewModel+SSEStream.swift \
@@ -94,6 +95,10 @@ jobs:
       - name: Test Quick Test agent-path fallback
         run: |
           python3 scripts/test_quicktest_agent_fallback.py
+
+      - name: Test chat auto-helpers wiring
+        run: |
+          python3 scripts/test_chat_optimizer.py
 
       - name: Validate Xcode project prerequisites
         shell: bash

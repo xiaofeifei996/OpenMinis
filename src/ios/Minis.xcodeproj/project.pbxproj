@@ -513,6 +513,7 @@
 		E5VMB0003 /* AIChatViewModel+Misc.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMB0013 /* AIChatViewModel+Misc.swift */; };
 		E5VMB0004 /* AIChatViewModel+RequestBudget.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMB0014 /* AIChatViewModel+RequestBudget.swift */; };
 		E5VMB0005 /* ChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMB0015 /* ChatModels.swift */; };
+		E5CHOPT0001 /* ChatOptimizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5CHOPT0011 /* ChatOptimizer.swift */; };
 		E5VMB0006 /* ChatLifecycleSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMB0016 /* ChatLifecycleSupport.swift */; };
 		E5VMB0007 /* ChatURLBrokerage.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMB0017 /* ChatURLBrokerage.swift */; };
 		E5VMC0001 /* AIChatViewModel+ISHCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMC0011 /* AIChatViewModel+ISHCommand.swift */; };
@@ -1346,6 +1347,7 @@
 		E5VMB0013 /* AIChatViewModel+Misc.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+Misc.swift"; sourceTree = "<group>"; };
 		E5VMB0014 /* AIChatViewModel+RequestBudget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+RequestBudget.swift"; sourceTree = "<group>"; };
 		E5VMB0015 /* ChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModels.swift; sourceTree = "<group>"; };
+		E5CHOPT0011 /* ChatOptimizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatOptimizer.swift; sourceTree = "<group>"; };
 		E5VMB0016 /* ChatLifecycleSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatLifecycleSupport.swift; sourceTree = "<group>"; };
 		E5VMB0017 /* ChatURLBrokerage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatURLBrokerage.swift; sourceTree = "<group>"; };
 		E5VMC0011 /* AIChatViewModel+ISHCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+ISHCommand.swift"; sourceTree = "<group>"; };
@@ -2391,6 +2393,7 @@
 				E5VMB0013 /* AIChatViewModel+Misc.swift */,
 				E5VMB0014 /* AIChatViewModel+RequestBudget.swift */,
 				E5VMB0015 /* ChatModels.swift */,
+				E5CHOPT0011 /* ChatOptimizer.swift */,
 				E5VMB0016 /* ChatLifecycleSupport.swift */,
 				E5ITL0011 /* IdleTimerLease.swift */,
 				E5AJS0011 /* AOJITShellStats.swift */,
@@ -3251,6 +3254,7 @@
 				E5VMSPL005B /* AIChatViewModel+AutoPlayAudio.swift in Sources */,
 				E5VMSPL006B /* AIChatViewModel+SystemPrompt.swift in Sources */,
 				E5VMSPL007B /* AIChatViewModel+Send.swift in Sources */,
+				E5CHOPT0001 /* ChatOptimizer.swift in Sources */,
 				E5VMSPL008B /* AIChatViewModel+Rerun.swift in Sources */,
 				E5VMSPL009B /* AIChatViewModel+EditMessage.swift in Sources */,
 				E5VMSPL010B /* AIChatViewModel+Cancel.swift in Sources */,

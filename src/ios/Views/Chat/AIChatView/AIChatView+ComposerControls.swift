@@ -68,6 +68,9 @@ extension AIChatView {
             attachmentMenuButton
             slashMenuButton
             if vm.editingMessageIndex != nil { editExitButton }
+            // [T-optimize-prompt] "优化词条" button: rewrites the composer text
+            // into a clearer prompt using the current model before sending.
+            optimizePromptButton
             Spacer()
             // Mutually exclusive with editExitButton: while editing a past
             // message the exit capsule owns this row — showing both capsules
@@ -80,6 +83,57 @@ extension AIChatView {
             sendButton
         }
         return AnyView(row)
+    }
+
+    /// [T-optimize-prompt] Rewrites the current composer text into a clearer,
+    /// more professional prompt via the active model, then puts the result back
+    /// into the composer. Shows a spinner while rewriting.
+    @ViewBuilder
+    private var optimizePromptButton: some View {
+        Button {
+            Task { await runOptimizePrompt() }
+        } label: {
+            Image(systemName: optimizingPrompt ? "arrow.clockwise" : "sparkles")
+                .font(.system(size: 18))
+                .foregroundStyle(optimizingPrompt ? Color.secondary : Color.accentColor)
+                .frame(width: 34, height: 34)
+        }
+        .disabled(optimizingPrompt || vm.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .accessibilityLabel(Text("优化词条"))
+    }
+
+    @MainActor
+    private func runOptimizePrompt() async {
+        let original = vm.inputText
+        guard !original.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        optimizingPrompt = true
+        defer { optimizingPrompt = false }
+        // Resolve the active entry; fall back to the session's current entry.
+        guard let entry = vm.resolveCurrentEntry() else {
+            AppLogger(category: "ChatOptimizer").warning("[optimize] no active entry; skip")
+            return
+        }
+        // Prompt rewrite is a standalone request, not a conversation turn.
+        // Stream the result back into the composer so the first token appears
+        // well before the rewrite finishes; cache + in-flight dedup make a
+        // repeated tap instant. Only apply while the user hasn't typed more.
+        do {
+            var accumulated = ""
+            let stream = ChatOptimizer.shared.optimizeStreaming(original, using: entry)
+            for try await delta in stream {
+                accumulated += delta
+                if vm.inputText == original {
+                    vm.inputText = accumulated
+                }
+            }
+        } catch {
+            // [T-optimize-prompt] Surface the failure instead of silently keeping
+            // the original text — the user must know the rewrite didn't happen.
+            AppLogger(category: "ChatOptimizer").warning("[optimize] rewrite failed, showing toast: \(error.localizedDescription)")
+            MinisToast.show((error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
+                            duration: 2.4,
+                            systemImage: "exclamationmark.triangle.fill")
+        }
     }
 
     /// [T-ios-de-voice-toolbar] Fixed controls in `inputBottomRow`: two 34pt

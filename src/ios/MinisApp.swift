@@ -558,6 +558,12 @@ struct MinisApp: App {
                 CrashReporter.shared.updateMarkerPhase(phase: "active")
 
                 _ = SessionBadgeStore.shared
+                // [T-optimize-prompt] Background speed test of all available
+                // models so the model picker can show latency badges and
+                // auto-pick-fastest has data. Non-blocking: it runs in its own
+                // Task and writes the cache; if it fails (offline) it simply
+                // leaves the cache empty and the picker shows no badge.
+                Task { await ChatOptimizer.shared.ensureLatencyDataOnce(sessionId: nil) }
                 // [T-ios-session-paused-badge-hardkill] Reconcile .paused badges
                 // against the DB's interrupted-session set. The background-expiry
                 // push only fires on a graceful task expiry; a hard kill (jetsam/

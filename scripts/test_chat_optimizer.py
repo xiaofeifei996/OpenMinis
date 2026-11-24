@@ -82,6 +82,49 @@ def main() -> int:
         print(("PASS" if found else "FAIL") + ": " + name)
         ok &= found
 
+    # [T-speedtest-throttle] A rate limit is an account fact, not a model
+    # defect: it must stop the run and must not leave a red cross behind.
+    throttle = OPT.read_text()
+    checks = [
+        ("throttle is recognised", "private static func isThrottle"),
+        ("throttle stops the run", "throttled = true"),
+        ("throttle stops pumping", "guard !throttled else { return }"),
+        ("throttle leaves no error on the entry", "updated.errors.removeValue(forKey: id)"),
+        ("stale throttle errors are cleared before deciding", "cleared \\(staleThrottle.count) stale throttle error"),
+        ("manual test does not burst the gateway", "concurrency: 2"),
+    ]
+    for name, needle in checks:
+        found = needle in throttle or needle in PICKER.read_text()
+        print(("PASS" if found else "FAIL") + ": " + name)
+        ok &= found
+
+    # Trae: the roster cache must be shared or every request re-fetches it.
+    trae_api = (ROOT / "src/ios/Providers/Trae/TraeAPI.swift").read_text()
+    factory = (ROOT / "src/ios/Providers/LLMProviderFactory.swift").read_text()
+    for name, needle in [
+        ("Trae roster cache is process-wide", "static let shared = ModelFunctions()"),
+        ("Trae provider reuses that cache", "TraeAPI.ModelFunctions.shared"),
+        ("roster failure is observable", "func rosterUnavailable(identity: String) -> Bool"),
+    ]:
+        found = needle in trae_api or needle in factory
+        print(("PASS" if found else "FAIL") + ": " + name)
+        ok &= found
+    if "ModelFunctions()" in factory:
+        print("FAIL: a fresh ModelFunctions is still created per provider")
+        ok = False
+
+    # Raccoon: the workspace code must travel with every chat request.
+    raccoon_mgr = (ROOT / "src/ios/Providers/Raccoon/RaccoonOAuthManager.swift").read_text()
+    for name, needle in [
+        ("org code is persisted", "static let orgCode = \"raccoon-org-code\""),
+        ("personal account sends no org header", 'orgCode.lowercased() != "personal"'),
+        ("chat carries X-Org-Code", '"X-Org-Code"'),
+        ("chat identifies as the desktop client", '"X-Client-Platform"'),
+    ]:
+        found = needle in raccoon_mgr or needle in factory
+        print(("PASS" if found else "FAIL") + ": " + name)
+        ok &= found
+
     # The soft-fail contract: a probe failure must not mark an entry unavailable.
     # Every user-visible string must be a localizable English key, not a
     # Chinese or other literal the catalog cannot resolve.

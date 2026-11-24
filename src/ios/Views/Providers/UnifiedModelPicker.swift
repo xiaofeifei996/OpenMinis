@@ -902,7 +902,7 @@ struct UnifiedModelPicker: View {
                         let sid = config.currentSessionId?()
                         await ChatOptimizer.shared.speedTestAll(
                             sessionId: sid,
-                            concurrency: 6,
+                            concurrency: 2,
                             includeAllAccounts: true,
                             progress: { done, total in
                                 Task { @MainActor in speedTestProgress = "\(done)/\(total)" }

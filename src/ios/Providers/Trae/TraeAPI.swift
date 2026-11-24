@@ -577,9 +577,25 @@ enum TraeAPI {
     /// Request-local provider cache. The identity includes the origin and token
     /// digest, so another account or endpoint cannot reuse a model's route.
     final class ModelFunctions: @unchecked Sendable {
+        /// [T-trae-roster-cache] One cache for the whole process.
+        ///
+        /// A provider is built per model pick, so a `ModelFunctions()` created
+        /// inside `makeTraeProvider` was empty every single time: the first
+        /// request of every turn re-fetched the roster (~6 round trips), and if
+        /// that fetch failed the lookup fell through to `defaultFunction` —
+        /// silently routing a `chat_v3` model at `solo_work_remote`, which the
+        /// gateway refuses ("Trae refused the streaming request"). Measuring
+        /// that snapshot across models then painted the whole provider red.
+        /// Sharing one cache means the roster is fetched once per account and
+        /// survives the provider being rebuilt.
+        static let shared = ModelFunctions()
+
         private let lock = NSLock()
         private var identity = ""
         private var functions: [String: String] = [:]
+        /// Set once a roster fetch came back empty for this identity, so the
+        /// next request does not silently pretend the route is known.
+        private var lastFetchFailed = false
 
         func needsDirectory(identity: String) -> Bool {
             lock.lock(); defer { lock.unlock() }
@@ -590,6 +606,14 @@ enum TraeAPI {
             lock.lock(); defer { lock.unlock() }
             self.identity = identity
             functions = Dictionary(entries.map { ($0.id, $0.function) }, uniquingKeysWith: { first, _ in first })
+            lastFetchFailed = entries.isEmpty
+        }
+
+        /// True when the roster for this identity could not be read at all.
+        /// Callers use it to report a real reason instead of blaming the model.
+        func rosterUnavailable(identity: String) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            return self.identity == identity && lastFetchFailed && functions.isEmpty
         }
 
         func function(for model: String) -> String {

@@ -22,6 +22,8 @@ enum RaccoonKeychain {
     static let refresh = "raccoon-refresh-token"
     static let expiry = "raccoon-access-expiry"
     static let userID = "raccoon-user-id"
+    /// `office_identity` — the account/workspace code sent as `X-Org-Code`.
+    static let orgCode = "raccoon-org-code"
 }
 
 @MainActor
@@ -72,7 +74,8 @@ final class RaccoonOAuthManager {
         inFlightRefresh[instanceId]?.cancel()
         inFlightRefresh[instanceId] = nil
         for account in [RaccoonKeychain.access, RaccoonKeychain.refresh,
-                        RaccoonKeychain.expiry, RaccoonKeychain.userID] {
+                        RaccoonKeychain.expiry, RaccoonKeychain.userID,
+                        RaccoonKeychain.orgCode] {
             ProviderKeychainHelper.deleteOAuthString(instanceId: instanceId, account: account)
         }
         logger.info("logout instanceId=\(instanceId.prefix(8))")
@@ -105,6 +108,16 @@ final class RaccoonOAuthManager {
         if let userID = credentials.userID, !userID.isEmpty {
             ProviderKeychainHelper.saveOAuthString(
                 userID, instanceId: instanceId, account: RaccoonKeychain.userID)
+        }
+        // [T-raccoon-org-code] Without this the chat request goes out with no
+        // `X-Org-Code`, and a workspace account's models answer 429/401 even
+        // though the token is valid (the catalog still lists, which is why the
+        // provider looked configured and every model failed).
+        if let orgCode = credentials.orgCode, !orgCode.isEmpty, orgCode.lowercased() != "personal" {
+            ProviderKeychainHelper.saveOAuthString(
+                orgCode, instanceId: instanceId, account: RaccoonKeychain.orgCode)
+        } else {
+            ProviderKeychainHelper.deleteOAuthString(instanceId: instanceId, account: RaccoonKeychain.orgCode)
         }
     }
 

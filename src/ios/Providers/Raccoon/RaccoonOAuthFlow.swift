@@ -40,6 +40,9 @@ enum RaccoonOAuthFlow {
         let refreshToken: String
         let expiresAt: Double?
         let userID: String?
+        /// `office_identity` from the exchange — the account/workspace code the
+        /// gateway wants in `X-Org-Code` on every chat request.
+        let orgCode: String?
     }
 
     enum FlowError: LocalizedError {
@@ -146,8 +149,26 @@ enum RaccoonOAuthFlow {
             accessToken: access,
             refreshToken: refresh,
             expiresAt: RaccoonJWT.expiry(access),
-            userID: RaccoonJWT.userID(access)
+            userID: RaccoonJWT.userID(access),
+            orgCode: firstNonEmpty(payload, ["office_identity", "officeIdentity"])
         )
+    }
+
+    /// First non-empty string among `keys`.
+    ///
+    /// The exchange answers `office_identity` beside the tokens; it is the
+    /// account code the chat gateway expects in `X-Org-Code`. A personal
+    /// account answers the literal `personal`, which means "send no org
+    /// header" — the gateway rejects an org it cannot resolve.
+    static func firstNonEmpty(_ object: [String: Any], _ keys: [String]) -> String? {
+        for key in keys {
+            if let value = object[key] as? String {
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+            }
+            if let value = object[key] as? NSNumber { return value.stringValue }
+        }
+        return nil
     }
 
     /// Full sign-in: browser → code → tokens.

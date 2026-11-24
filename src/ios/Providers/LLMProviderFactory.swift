@@ -576,12 +576,25 @@ enum LLMProviderFactory {
             provider.customBaseURL = base
             provider.appendV1Suffix = false
         }
-        // The gateway distinguishes the desktop client from the website on
-        // these headers; without them it answers as a browser session.
-        provider.extraHeaders.merge([
+        // [T-raccoon-client-headers] The gateway distinguishes the desktop
+        // client from a browser session on these headers. `X-Client-Platform`
+        // and `X-Raccoon-Language` are what the official Windows client sends;
+        // `X-Org-Code` names the workspace the request bills to, and a
+        // workspace account's models are refused without it even when the
+        // bearer is valid (the catalog keeps working, which is why this used
+        // to look like "all models are down").
+        var headers: [String: String] = [
             "User-Agent": RaccoonOAuthFlow.userAgent,
             "Accept": "*/*",
-        ]) { _, new in new }
+            "X-Client-Platform": "desktop-windows",
+            "X-Raccoon-Language": "zh",
+        ]
+        if let org = ProviderKeychainHelper.loadOAuthString(
+            instanceId: iid, account: RaccoonKeychain.orgCode
+        ), !org.isEmpty {
+            headers["X-Org-Code"] = org
+        }
+        provider.extraHeaders.merge(headers) { _, new in new }
         return provider
     }
 
@@ -681,7 +694,7 @@ enum LLMProviderFactory {
         provider.authHeaderName = "Authorization"
         provider.authHeaderPrefix = "Cloud-IDE-JWT "
         provider.absoluteEndpointOverride = TraeAPI.chatPath
-        let functions = TraeAPI.ModelFunctions()
+        let functions = TraeAPI.ModelFunctions.shared
         provider.extraHeaders.merge(TraeAPI.clientHeaders()) { _, new in new }
         provider.extraHeaders["Accept"] = "text/event-stream"
         provider.extraAuthHeaders = { token in
@@ -703,6 +716,11 @@ enum LLMProviderFactory {
             return headers
         }
         provider.bodyTransform = { body in
+            // [T-trae-roster-cache] The roster decides which `function` may
+            // call this model. When it could not be read we still send the
+            // default (the request may work for a default-roster model), but
+            // the shared cache remembers the failure so the surface can say
+            // "roster unavailable" instead of blaming the model.
             TraeAPI.mendedBody(body, model: model.id, function: functions.function(for: model.id))
         }
         provider.streamTranslator = TraeDialect()

@@ -367,7 +367,7 @@ final class ChatOptimizer {
 
     /// Speed-test every available entry (respecting an overall budget), update
     /// the cache with the best latency seen per entry.
-    func speedTestAll(sessionId: String?, concurrency: Int = 4, perEntryTimeout: TimeInterval = 20,
+    func speedTestAll(sessionId: String?, concurrency: Int = 2, perEntryTimeout: TimeInterval = 20,
                       includeAllAccounts: Bool = false, progress: ((Int, Int) -> Void)? = nil) async {
         // [T-speedtest-all-accounts] The manual button passes includeAllAccounts:
         // true so every model of every account is measured (and previously failed
@@ -383,7 +383,12 @@ final class ChatOptimizer {
             var idx = 0
             var inFlight = 0
             var done = 0
+            /// Set once the gateway throttles us: keep the results already
+            /// measured, stop sending new probes. A burst of 429s measures
+            /// nothing and spends the account's quota.
+            var throttled = false
             func pump() {
+                guard !throttled else { return }
                 while idx < entries.count, inFlight < concurrency {
                     let e = entries[idx]; idx += 1; inFlight += 1
                     group.addTask {
@@ -399,6 +404,14 @@ final class ChatOptimizer {
                     updated.entries[id] = lat
                     updated.unavailable.removeAll { $0 == id }   // recovered
                     updated.errors.removeValue(forKey: id)
+                } else if Self.isThrottle(probe) {
+                    // [T-speedtest-throttle] The ACCOUNT is rate limited, not
+                    // this model. Drop any error this run already recorded for
+                    // the entry (a throttle is not a model defect) and stop
+                    // spending the quota.
+                    throttled = true
+                    updated.errors.removeValue(forKey: id)
+                    logger.info("[latency] throttled after \(done) probe(s); stopping the run")
                 } else {
                     // [T-speedtest-soft-fail] A failed speed test is NOT proof the
                     // model is unusable — transient network/auth blips would wrongly
@@ -420,6 +433,24 @@ final class ChatOptimizer {
 
     /// Posted after a background speed test finishes so list rows can refresh.
     static let latencyUpdatedNotification = Notification.Name("chatOptimizer.latencyUpdated")
+
+    /// Whether a probe failure means "the account is being throttled" rather
+    /// than "this model is broken".
+    ///
+    /// Speed-testing hammers the gateway with one request per model; a rate
+    /// limit is a fact about the ACCOUNT at this instant, not about the model.
+    /// Recording it as a model error painted every row of a throttled provider
+    /// with a red cross (the reported 小浣熊 case: all seven models "Rate
+    /// limited" while the account was fine), which reads as "this provider is
+    /// dead". Treating it as back-off information keeps the badges honest and
+    /// stops the run from burning the whole quota in one burst.
+    private static func isThrottle(_ probe: LatencyProbe) -> Bool {
+        guard let error = probe.error?.lowercased() else { return false }
+        return error.contains("rate limited")
+            || error.contains("rate limit")
+            || error.contains("429")
+            || error.contains("too many requests")
+    }
 
     /// The fastest available entry per the latency cache, or nil if untested.
     func fastestEntry() -> ModelEntry? {
@@ -594,7 +625,23 @@ final class ChatOptimizer {
     /// Safe to call from app launch / picker appear. No-op if already populated.
     /// `sessionId` is a real session used so OpenCode-routed models can be tested.
     func ensureLatencyDataOnce(sessionId: String?) async {
-        guard readLatencyCache().entries.isEmpty else { return }
+        // [T-speedtest-throttle] An earlier run could have been throttled and
+        // recorded "Rate limited" against every model of that provider, which
+        // painted whole sections red. Those are account facts, not model
+        // defects, so drop them before deciding whether data is missing —
+        // otherwise the red crosses persist forever (the cache is non-empty, so
+        // nothing would ever re-test them).
+        var cache = readLatencyCache()
+        let staleThrottle = cache.errors.filter { key, _ in
+            cache.entries[key] == nil && Self.isThrottle(LatencyProbe(seconds: nil, error: cache.errors[key]))
+        }
+        if !staleThrottle.isEmpty {
+            for key in staleThrottle.keys { cache.errors.removeValue(forKey: key) }
+            writeLatencyCache(cache)
+            NotificationCenter.default.post(name: Self.latencyUpdatedNotification, object: nil)
+            logger.info("[latency] cleared \(staleThrottle.count) stale throttle error(s)")
+        }
+        guard cache.entries.isEmpty else { return }
         await speedTestAll(sessionId: sessionId)
     }
 

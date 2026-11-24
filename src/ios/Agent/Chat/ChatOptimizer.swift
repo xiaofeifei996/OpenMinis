@@ -383,6 +383,23 @@ final class ChatOptimizer {
         let cache = readLatencyCache()
         var updated = cache
 
+        // [T-speedtest-live-update] Publish while the run is in flight so rows
+        // fill in as they are measured instead of all at once at the end.
+        // Coalesced to at most one publish per `publishInterval`: a publish
+        // writes the whole cache and re-renders every row, and at concurrency 6
+        // a burst of completions would otherwise fire a dozen re-renders in one
+        // frame — the same stutter the badge-table change fixed on the read
+        // side. The final publish after the loop always runs.
+        let publishInterval: TimeInterval = 0.35
+        var lastPublish = Date.distantPast
+        func publishIfDue() {
+            let now = Date()
+            guard now.timeIntervalSince(lastPublish) >= publishInterval else { return }
+            lastPublish = now
+            writeLatencyCache(updated)
+            NotificationCenter.default.post(name: ChatOptimizer.latencyUpdatedNotification, object: nil)
+        }
+
         // Run with bounded concurrency.
         await withTaskGroup(of: (String, LatencyProbe).self) { group in
             var idx = 0
@@ -428,6 +445,7 @@ final class ChatOptimizer {
                 }
                 done += 1
                 progress?(done, entries.count)
+                publishIfDue()
                 pump()
             }
         }

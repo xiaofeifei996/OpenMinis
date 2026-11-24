@@ -94,9 +94,11 @@ def main() -> int:
     throttle = OPT.read_text()
     checks = [
         ("throttle is recognised", "private static func isThrottle"),
-        ("throttle stops the run", "throttled = true"),
-        ("throttle stops pumping", "guard !throttled else { return }"),
+        ("throttle is scoped to one provider", "blockedUntil[providerId]"),
+        ("a throttled provider is backed off, not the run", "throttleCooldown"),
         ("throttle leaves no error on the entry", "updated.errors.removeValue(forKey: id)"),
+        ("other providers keep going", "return now >= until"),
+        ("a throttled row is retried once", "queue.append(original)"),
         ("stale throttle errors are cleared before deciding", "cleared \\(staleThrottle.count) stale throttle error"),
         ("manual test runs the chosen concurrency", "concurrency: 6"),
     ]

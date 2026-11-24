@@ -383,12 +383,10 @@ final class ChatOptimizer {
         let cache = readLatencyCache()
         var updated = cache
 
-        // [T-speedtest-live-update] Publish as each probe lands so rows fill in
-        // progressively. The notification names the entries that actually
-        // changed, and the picker patches only those rows — that is what makes
-        // a per-completion publish affordable. Repainting the whole list on
-        // every completion is what forced a 0.35 s throttle before, and the
-        // throttle is what made updates look laggy.
+        // [T-speedtest-live-update] Publish as each probe lands so entries fill
+        // in progressively. The notification names the entry that changed, and
+        // the picker patches only that row — which is what makes a publish per
+        // completion affordable instead of repainting the whole list.
         func publish(ids: [String]) {
             writeLatencyCache(updated)
             NotificationCenter.default.post(
@@ -397,40 +395,82 @@ final class ChatOptimizer {
                 userInfo: [ChatOptimizer.latencyChangedIdsKey: ids])
         }
 
-        // Run with bounded concurrency.
-        await withTaskGroup(of: (String, LatencyProbe).self) { group in
-            var idx = 0
+        // [T-speedtest-throttle-scope] A 429 belongs to ONE provider account.
+        //
+        // The first version stopped the whole run on the first throttle, so a
+        // 56-model test died around entry 20 behind whichever provider happened
+        // to rate-limit. Each provider now backs off on its own: its unmeasured
+        // rows are parked, everything else keeps going, and the parked rows are
+        // retried once after `throttleCooldown`.
+        let throttleCooldown: TimeInterval = 8
+        var blockedUntil: [String: Date] = [:]   // providerId → retry not before
+        var queue = entries
+        var retried: Set<String> = []            // entries given their one retry
+        var done = 0
+
+        await withTaskGroup(of: (String, String, LatencyProbe).self) { group in
             var inFlight = 0
-            var done = 0
-            /// Set once the gateway throttles us: keep the results already
-            /// measured, stop sending new probes. A burst of 429s measures
-            /// nothing and spends the account's quota.
-            var throttled = false
+
+            /// Take the next entry whose provider is not cooling down.
+            func nextReady() -> ModelEntry? {
+                let now = Date()
+                return queue.first { entry in
+                    guard let until = blockedUntil[entry.providerInstanceId] else { return true }
+                    return now >= until
+                }
+            }
+
             func pump() {
-                guard !throttled else { return }
-                while idx < entries.count, inFlight < concurrency {
-                    let e = entries[idx]; idx += 1; inFlight += 1
+                while inFlight < concurrency, let entry = nextReady() {
+                    queue.removeAll { $0.id == entry.id }
+                    inFlight += 1
                     group.addTask {
-                        let probe = await self.measureLatency(entry: e, sessionId: sessionId)
-                        return (e.id, probe)
+                        let probe = await self.measureLatency(entry: entry, sessionId: sessionId)
+                        return (entry.id, entry.providerInstanceId, probe)
                     }
                 }
             }
+
             pump()
-            for await (id, probe) in group {
+            while inFlight > 0 || !queue.isEmpty {
+                // Nothing in flight and nothing ready: everything left is
+                // cooling down. Sleep until the earliest block lifts, drop the
+                // blocks that have now expired, and try once more. If nothing is
+                // ready after that, the remaining providers are unusable for
+                // this run — stop instead of spinning.
+                if inFlight == 0 {
+                    guard let waitUntil = blockedUntil.values.min() else { break }
+                    let wait = max(waitUntil.timeIntervalSinceNow, 0.2)
+                    try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                    blockedUntil = blockedUntil.filter { $0.value > Date() }
+                    if nextReady() == nil {
+                        logger.info("[latency] stopping with \(queue.count) unmeasured (provider still throttled)")
+                        break
+                    }
+                    pump()
+                    continue
+                }
+
+                guard let (id, providerId, probe) = await group.next() else { break }
                 inFlight -= 1
+
                 if let lat = probe.seconds {
                     updated.entries[id] = lat
                     updated.unavailable.removeAll { $0 == id }   // recovered
                     updated.errors.removeValue(forKey: id)
+                    done += 1
+                    progress?(done, entries.count)
                 } else if Self.isThrottle(probe) {
                     // [T-speedtest-throttle] The ACCOUNT is rate limited, not
-                    // this model. Drop any error this run already recorded for
-                    // the entry (a throttle is not a model defect) and stop
-                    // spending the quota.
-                    throttled = true
+                    // this model: leave no error behind and back this provider
+                    // off. Its row keeps waiting and gets one retry.
                     updated.errors.removeValue(forKey: id)
-                    logger.info("[latency] throttled after \(done) probe(s); stopping the run")
+                    blockedUntil[providerId] = Date().addingTimeInterval(throttleCooldown)
+                    if !retried.contains(id), let original = entries.first(where: { $0.id == id }) {
+                        retried.insert(id)
+                        queue.append(original)
+                    }
+                    logger.info("[latency] \(providerId.prefix(8)) throttled; backing off, \(queue.count) pending")
                 } else {
                     // [T-speedtest-soft-fail] A failed speed test is NOT proof the
                     // model is unusable — transient network/auth blips would wrongly
@@ -439,15 +479,14 @@ final class ChatOptimizer {
                     // auto-switch). The grey wifi is driven by `errors`, not
                     // `unavailable`.
                     updated.errors[id] = probe.error
+                    done += 1
+                    progress?(done, entries.count)
                 }
-                done += 1
-                progress?(done, entries.count)
-                // One publish per completed probe: the picker patches this one
-                // row, so there is nothing to coalesce.
                 publish(ids: [id])
                 pump()
             }
         }
+
         // Final publish: no id list, meaning "everything may have changed".
         writeLatencyCache(updated)
         NotificationCenter.default.post(name: ChatOptimizer.latencyUpdatedNotification, object: nil)

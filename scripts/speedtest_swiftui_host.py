@@ -95,7 +95,18 @@ def run_swiftui_test(harness, picker, tmp):
 @MainActor func clockReading(_ window: NSWindow, name: String) async throws -> Double {
     let pattern = try NSRegularExpression(pattern: #"([0-9]+)[.,]([0-9])"#)
     for _ in 0..<60 {
-        let (text, _, rep) = try rendered(window)
+        let (_, _, rep) = try rendered(window)
+        // The 500pt one-row fixture samples sub-10-second readings. Crop its
+        // right-aligned numeric text, excluding the separate hourglass glyph:
+        // Vision otherwise sometimes reads the icon + 0.0s as "20.0s".
+        let numeric = rep.cgImage!.cropping(to: CGRect(x: CGFloat(rep.pixelsWide - 125),
+            y: 0, width: 100, height: CGFloat(rep.pixelsHigh)))!
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        request.minimumTextHeight = 0
+        try VNImageRequestHandler(cgImage: numeric, options: [:]).perform([request])
+        let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined()
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         if let match = pattern.firstMatch(in: text, range: range),
            let numberRange = Range(match.range, in: text),

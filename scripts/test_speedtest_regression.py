@@ -58,8 +58,13 @@ checks = {
         'for entry in queue { complete(entry.providerInstanceId, skipped: true) }' in source,
     'header button invokes scoped entry point, not global':
         'InstanceSpeedTestButton(instanceId: item.instance.id' in picker
-        and 'ChatOptimizer.shared.speedTestInstance(' in picker
-        and '.disabled(joined != nil)' in picker,
+        and 'ChatOptimizer.shared.speedTestInstance(' in picker,
+    'partial automatic API scope stays upgradeable; explicit full scope locks before suspension':
+        '.disabled(joined != nil && (status.includesAllAccounts || status.fullInstanceIds.contains(instanceId)))' in picker
+        and '@Published var fullInstanceIds: Set<String> = []' in source
+        and 'speedTestStatus.fullInstanceIds = []' in source
+        and source.index('speedTestStatus.fullInstanceIds.insert(instanceId)')
+            < source.index('await withCheckedContinuation { speedTestWaiters.append($0) }'),
 }
 for name, passed in checks.items():
     print(('PASS' if passed else 'FAIL') + ': ' + name, flush=True)
@@ -133,6 +138,17 @@ struct TestLog { func info(_ text: String) {} }
     }
 ''' + cache + probe + scheduler + notifications + throttle + '\n}\n'
 production_harness = program
+# Evaluate the exact production button predicate in Swift alongside the real
+# scheduler, so this regression fails if partial coverage disables the UI again.
+instance_button = picker[picker.index('    private struct InstanceSpeedTestButton: View'):]
+button_disabled = instance_button.split('.disabled(', 1)[1].split('\n', 1)[0][:-1]
+program += '''
+@MainActor func apiButtonDisabled(_ optimizer: ChatOptimizer, _ instanceId: String) -> Bool {
+    let status = optimizer.speedTestStatus
+    let joined = status.running ? status.instances[instanceId] : nil
+    return ''' + button_disabled + '''
+}
+'''
 program += r'''
 func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
     (0..<count).map { ModelEntry(id: "m\($0)", providerInstanceId: "a\($0 % accounts)") }
@@ -182,6 +198,58 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         assert(scoped.starts.count == 4 && !scoped.speedTestStatus.running)
         print("PASS: API-only request includes exactly its catalog entries; empty API never expands scope")
 
+        // Automatic available-only probes may already include a0, but a tap
+        // must still add its hidden/disabled catalog rows, not other APIs'.
+        let partial = ChatOptimizer()
+        partial.catalog = entries(12, accounts: 3)
+        partial.automatic = Array(partial.catalog.prefix(2)) // m0/a0, m1/a1
+        partial.holdRequests = true
+        let partialRun = Task { @MainActor in await partial.speedTestAll(sessionId: nil) }
+        for _ in 0..<1000 {
+            if partial.held.count == 2 { break }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        assert(partial.held.count == 2 && partial.speedTestStatus.running)
+        assert(partial.speedTestStatus.instances["a0"]?.total == 1)
+        assert(partial.speedTestStatus.fullInstanceIds.isEmpty)
+        assert(!apiButtonDisabled(partial, "a0") && !apiButtonDisabled(partial, "a2"))
+        let upgradeAPI = Task { @MainActor in await partial.speedTestInstance(instanceId: "a0", sessionId: nil) }
+        for _ in 0..<1000 {
+            if partial.speedTestStatus.fullInstanceIds.contains("a0") { break }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        // The explicit scope locks before waiting for any held probe; a1's
+        // automatic partial scope remains enabled and global scope stays false.
+        assert(partial.speedTestStatus.fullInstanceIds == Set(["a0"]))
+        assert(apiButtonDisabled(partial, "a0") && !apiButtonDisabled(partial, "a1"))
+        assert(!partial.speedTestStatus.includesAllAccounts)
+        let duplicateAPI = Task { @MainActor in await partial.speedTestInstance(instanceId: "a0", sessionId: nil) }
+        for _ in 0..<20 { await Task.yield() }
+        partial.holdRequests = false
+        partial.releaseHeld()
+        await partialRun.value
+        await upgradeAPI.value
+        await duplicateAPI.value
+        let expectedPartial = Set(partial.catalog.filter { $0.providerInstanceId == "a0" }.map(\.id) + ["m1"])
+        assert(Set(partial.starts.keys) == expectedPartial && partial.starts.values.allSatisfy { $0 == 1 })
+        assert(partial.speedTestStatus.instances["a0"] == InstanceSpeedTestProgress(done: 4, total: 4, skipped: 0))
+        assert(partial.speedTestStatus.instances["a1"] == InstanceSpeedTestProgress(done: 1, total: 1, skipped: 0))
+        assert(partial.speedTestStatus.instances["a2"] == nil)
+        assert(!apiButtonDisabled(partial, "a0") && partial.maxActive <= 4 && partial.maxAccount <= 2)
+        // A later automatic batch must not inherit the previous explicit lock.
+        partial.holdRequests = true
+        let nextPartial = Task { @MainActor in await partial.speedTestAll(sessionId: nil) }
+        for _ in 0..<1000 {
+            if partial.held.count == 2 { break }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        assert(partial.held.count == 2 && partial.speedTestStatus.fullInstanceIds.isEmpty)
+        assert(!apiButtonDisabled(partial, "a0"))
+        partial.holdRequests = false
+        partial.releaseHeld()
+        await nextPartial.value
+        print("PASS: automatic partial -> full single-API upgrade, pre-await button lock, no unrelated API expansion or duplicates, independent progress, next-batch reset")
+
         // Two API requests plus duplicate taps merge without probing a third API.
         let apiMerge = ChatOptimizer()
         apiMerge.catalog = entries(18, accounts: 3)
@@ -214,6 +282,8 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         let allAPI = Task { @MainActor in await apiGlobal.speedTestAll(sessionId: nil, includeAllAccounts: true) }
         let joiningAPI = Task { @MainActor in await apiGlobal.speedTestInstance(instanceId: "a2", sessionId: nil) }
         for _ in 0..<20 { await Task.yield() }
+        assert(apiGlobal.speedTestStatus.includesAllAccounts)
+        assert(apiButtonDisabled(apiGlobal, "a0") && apiButtonDisabled(apiGlobal, "a2"))
         apiGlobal.holdRequests = false
         apiGlobal.releaseHeld()
         await firstAPI.value

@@ -93,6 +93,9 @@ final class ModelSpeedTestStatus: ObservableObject {
     @Published var skipped = 0
     @Published var progress: String?
     @Published var instances: [String: InstanceSpeedTestProgress] = [:]
+    /// Automatic testing covers only available rows. A manual API tap may
+    /// upgrade that partial scope once, even while its automatic probes run.
+    @Published var fullInstanceIds: Set<String> = []
 }
 
 /// [T-speedtest-diag] Result of one latency probe: seconds on success, or the
@@ -517,9 +520,11 @@ final class ChatOptimizer {
             includeAvailableRequested = false
             requestedInstanceIds.removeAll()
             speedTestStatus.instances = [:]
+            speedTestStatus.fullInstanceIds = []
         }
         if let instanceId {
             requestedInstanceIds.insert(instanceId)
+            speedTestStatus.fullInstanceIds.insert(instanceId)
             // Acquire before suspension, including taps from another picker.
             if speedTestStatus.instances[instanceId] == nil {
                 speedTestStatus.instances[instanceId] = InstanceSpeedTestProgress()

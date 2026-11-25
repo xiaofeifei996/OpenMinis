@@ -1674,8 +1674,8 @@ struct UnifiedModelPicker: View {
         }
     }
 
-    /// Per-API header control. A completed scope remains disabled until the
-    /// shared batch ends, so a second tap cannot re-probe it inside that batch.
+    /// Per-API header control. An explicitly requested full scope remains
+    /// disabled until the shared batch ends, preventing duplicate full requests.
     @MainActor
     private struct InstanceSpeedTestButton: View {
         @ObservedObject private var status = ChatOptimizer.shared.speedTestStatus
@@ -1709,7 +1709,9 @@ struct UnifiedModelPicker: View {
             .foregroundStyle(.tint)
             .textCase(nil)
             .fixedSize()
-            .disabled(joined != nil)
+            // Automatic available-only coverage can be upgraded once to this
+            // API's full catalog; only an explicit full scope locks the button.
+            .disabled(joined != nil && (status.includesAllAccounts || status.fullInstanceIds.contains(instanceId)))
             .accessibilityLabel(Text("Speed-test all models in \(label)"))
         }
     }

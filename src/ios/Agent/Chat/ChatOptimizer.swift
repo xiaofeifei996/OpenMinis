@@ -9,6 +9,7 @@
 //
 
 import Foundation
+import Combine
 
 // MARK: - Settings keys (UserDefaults via @AppStorage elsewhere)
 
@@ -38,11 +39,51 @@ struct ModelLatencyCache: Codable {
     var errors: [String: String] = [:]
 }
 
+/// Process-lifetime source of truth. Badge leaves subscribe directly, including
+/// leaves mounted after a probe finished or while a picker is being reopened.
+@MainActor
+final class ModelLatencyState: ObservableObject {
+    @Published var cache: ModelLatencyCache
+    init(cache: ModelLatencyCache) { self.cache = cache }
+}
+
+/// Separate from the cache so progress never invalidates all badge leaves.
+@MainActor
+final class ModelSpeedTestStatus: ObservableObject {
+    @Published var running = false
+    @Published var includesAllAccounts = false
+    @Published var skipped = 0
+    @Published var progress: String?
+}
+
 /// [T-speedtest-diag] Result of one latency probe: seconds on success, or the
 /// failure reason (so the picker can explain a grey wifi).
 struct LatencyProbe: Sendable {
     let seconds: Double?
     let error: String?
+}
+
+/// All methods run on the main actor, so registration and the single winner
+/// are atomic. Unlike a task-group race, a deadline does not join an opener
+/// that ignores cancellation. Its account/global permit is kept until it exits.
+@MainActor
+private final class LatencyProbeRace {
+    var continuation: CheckedContinuation<LatencyProbe, Never>?
+    var request: Task<Void, Never>?
+    var timer: Task<Void, Never>?
+    private var finished = false
+
+    func finish(_ result: LatencyProbe) {
+        guard !finished else { return }
+        finished = true
+        let continuation = self.continuation
+        self.continuation = nil
+        request?.cancel()
+        timer?.cancel()
+        request = nil
+        timer = nil
+        continuation?.resume(returning: result)
+    }
 }
 
 /// Errors surfaced by `ChatOptimizer`.
@@ -67,7 +108,19 @@ final class ChatOptimizer {
     private let userDefaults = UserDefaults.standard
     private let logger = AppLogger(category: "ChatOptimizer")
 
-    private init() {}
+    let latencyState: ModelLatencyState
+    let speedTestStatus = ModelSpeedTestStatus()
+    private var speedTestWaiters: [CheckedContinuation<Void, Never>] = []
+    private var includeAllAccountsRequested = false
+    // Includes requests whose deadline fired but whose opener ignored cancel.
+    // Never reuse their permits until the actual request task has stopped.
+    private var activeLatencyProbes: [String: String] = [:] // entryId -> account
+
+    private init() {
+        let data = UserDefaults.standard.data(forKey: ChatOptimizerSettings.latencyCacheKey)
+        let cache = data.flatMap { try? JSONDecoder().decode(ModelLatencyCache.self, from: $0) }
+        latencyState = ModelLatencyState(cache: cache ?? ModelLatencyCache())
+    }
 
     // MARK: Prompt rewrite ("优化词条")
 
@@ -234,14 +287,11 @@ final class ChatOptimizer {
     // MARK: Latency speed-test
 
     private func readLatencyCache() -> ModelLatencyCache {
-        guard let data = userDefaults.data(forKey: ChatOptimizerSettings.latencyCacheKey),
-              let c = try? JSONDecoder().decode(ModelLatencyCache.self, from: data) else {
-            return ModelLatencyCache()
-        }
-        return c
+        latencyState.cache
     }
 
     private func writeLatencyCache(_ cache: ModelLatencyCache) {
+        latencyState.cache = cache
         if let data = try? JSONEncoder().encode(cache) {
             userDefaults.set(data, forKey: ChatOptimizerSettings.latencyCacheKey)
         }
@@ -277,7 +327,40 @@ final class ChatOptimizer {
 
     /// Measure first-token latency for one entry using a tiny prompt.
     /// Returns seconds, or an error string on failure.
-    func measureLatency(entry: ModelEntry, sessionId: String?) async -> LatencyProbe {
+    func measureLatency(entry: ModelEntry, sessionId: String?,
+                        timeout: TimeInterval = 12) async -> LatencyProbe {
+        // One deadline covers provider creation AND both request envelopes.
+        // Retain real permits until the producer exits, even if a provider's
+        // stream opener ignores cancellation. Late results cannot change cache.
+        guard !Task.isCancelled else { return LatencyProbe(seconds: nil, error: "cancelled") }
+        guard activeLatencyProbes[entry.id] == nil,
+              activeLatencyProbes.count < 6,
+              activeLatencyProbes.values.filter({ $0 == entry.providerInstanceId }).count < 2 else {
+            return LatencyProbe(seconds: nil, error: "previous probe still stopping")
+        }
+        let race = LatencyProbeRace()
+        activeLatencyProbes[entry.id] = entry.providerInstanceId
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                race.continuation = continuation
+                race.request = Task { @MainActor in
+                    defer { self.activeLatencyProbes.removeValue(forKey: entry.id) }
+                    let result = await self.performLatencyProbe(entry: entry, sessionId: sessionId)
+                    race.finish(result)
+                }
+                race.timer = Task { @MainActor in
+                    do {
+                        try await Task.sleep(nanoseconds: UInt64(max(0.01, timeout) * 1_000_000_000))
+                        race.finish(LatencyProbe(seconds: nil, error: "first-token timeout"))
+                    } catch { /* another outcome won */ }
+                }
+            }
+        } onCancel: {
+            Task { @MainActor in race.finish(LatencyProbe(seconds: nil, error: "cancelled")) }
+        }
+    }
+
+    private func performLatencyProbe(entry: ModelEntry, sessionId: String?) async -> LatencyProbe {
         let messages: [LLMMessage] = [
             LLMMessage(role: .user, content: "hi")
         ]
@@ -291,7 +374,9 @@ final class ChatOptimizer {
         }()
         let start = Date()
         do {
+            try Task.checkCancellation()
             let provider = try await LLMProviderFactory.makeProvider(for: entry, sessionId: effectiveSessionId)
+            try Task.checkCancellation()
             // Use the streaming path so we can capture time-to-first-token.
             // [T-latency-min-output] Many OpenAI-compat services reject a tiny
             // max_tokens with HTTP 400, so a WORKING model showed the red ✗. The
@@ -311,6 +396,13 @@ final class ChatOptimizer {
             return LatencyProbe(seconds: nil, error: "no text returned")
         } catch {
             let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            if Task.isCancelled || error is CancellationError {
+                return LatencyProbe(seconds: nil, error: "cancelled")
+            }
+            let failure = LatencyProbe(seconds: nil, error: msg)
+            // A 429 must reach the account scheduler, not issue another request
+            // through the agent envelope and double the throttled traffic.
+            if Self.isThrottle(failure) { return failure }
             // [T-latency-agent-path] The probe above sends the plain
             // `streamMessage` body. Gateways that validate the request against
             // the envelope the agent loop uses reject it outright — Raccoon
@@ -343,8 +435,10 @@ final class ChatOptimizer {
         ]
         let start = Date()
         do {
+            try Task.checkCancellation()
             let provider = await AIChatViewModel.makeAgentProvider(
                 for: entry, sessionId: OpenCodeChannel.oneOffSessionId())
+            try Task.checkCancellation()
             let stream = try await provider.streamAgentMessageClamped(
                 messages: messages,
                 systemPrompt: nil,
@@ -361,27 +455,61 @@ final class ChatOptimizer {
         } catch {
             let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             logger.info("[latency] \(entry.id) agent-path probe failed: \(msg)")
-            return nil
+            let failure = LatencyProbe(seconds: nil, error: msg)
+            return Self.isThrottle(failure) ? failure : nil
         }
     }
 
-    /// Speed-test every available entry (respecting an overall budget), update
-    /// the cache with the best latency seen per entry.
-    // [T-speedtest-concurrency] 6 in flight: fast enough that a whole list
-    // finishes in seconds, and the throttle guard below now absorbs the
-    // gateway's 429 instead of recording every model as broken. Lower it here
-    // (and in the picker's manual button) if a provider starts answering 429
-    // on the very first probe.
-    func speedTestAll(sessionId: String?, concurrency: Int = 6, perEntryTimeout: TimeInterval = 20,
+    /// One process-wide run, shared by automatic and manual callers. A manual
+    /// request upgrades an automatic run's queue rather than racing its cache.
+    /// Up to four probes globally, two per account; request failures stay soft.
+    func speedTestAll(sessionId: String?, concurrency: Int = 4, perEntryTimeout: TimeInterval = 12,
                       includeAllAccounts: Bool = false, progress: ((Int, Int) -> Void)? = nil) async {
-        // [T-speedtest-all-accounts] The manual button passes includeAllAccounts:
-        // true so every model of every account is measured (and previously failed
-        // ones get retried). Background auto-testing keeps the narrower set.
-        let entries = includeAllAccounts ? allEntriesAcrossAccounts() : availableEntries()
+        if speedTestStatus.running {
+            includeAllAccountsRequested = includeAllAccountsRequested || includeAllAccounts
+            speedTestStatus.includesAllAccounts = includeAllAccountsRequested
+            await withCheckedContinuation { speedTestWaiters.append($0) }
+            return
+        }
+        guard !Task.isCancelled else { return }
+        speedTestStatus.running = true // acquired before the first suspension
+        includeAllAccountsRequested = includeAllAccounts
+        speedTestStatus.includesAllAccounts = includeAllAccounts
+        speedTestStatus.skipped = 0
+        defer {
+            speedTestStatus.running = false
+            speedTestStatus.progress = nil
+            let waiters = speedTestWaiters
+            speedTestWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
+        var entries: [ModelEntry] = []
+        var queue: [ModelEntry] = []
+        var knownIds: Set<String> = []
+        var done = 0
+        let globalLimit = min(6, max(1, concurrency))
+        let accountLimit = min(2, globalLimit)
+        var updated = readLatencyCache()
+
+        func reportProgress() {
+            speedTestStatus.progress = "\(done)/\(entries.count)"
+            progress?(done, entries.count)
+        }
+        var enqueuedAllAccounts = false
+        func enqueueRequestedEntries() {
+            // Re-scan only once when an automatic run is upgraded to manual,
+            // not once per completion (the provider catalog can have 7k rows).
+            guard entries.isEmpty || (includeAllAccountsRequested && !enqueuedAllAccounts) else { return }
+            enqueuedAllAccounts = includeAllAccountsRequested
+            let requested = includeAllAccountsRequested ? allEntriesAcrossAccounts() : availableEntries()
+            for entry in requested where knownIds.insert(entry.id).inserted {
+                entries.append(entry)
+                queue.append(entry)
+            }
+            reportProgress()
+        }
+        enqueueRequestedEntries()
         guard !entries.isEmpty else { return }
-        progress?(0, entries.count)
-        let cache = readLatencyCache()
-        var updated = cache
 
         // [T-speedtest-live-update] Publish as each probe lands so entries fill
         // in progressively.
@@ -395,6 +523,9 @@ final class ChatOptimizer {
         // that the progress looked frozen (the reported "no live update").
         // The cache itself only needs to be durable when the run ends.
         func publish(id: String, seconds: Double?, error: String?) {
+            // Publish one atomic snapshot before compatibility notifications.
+            // No view has to re-read stale disk data, even when mounted mid-run.
+            latencyState.cache = updated
             // [T-speedtest-live-update] Put ONLY the non-nil value in the payload.
             //
             // The previous version stored `seconds as Any` with `seconds: Double?`,
@@ -424,28 +555,49 @@ final class ChatOptimizer {
         // retried once after `throttleCooldown`.
         let throttleCooldown: TimeInterval = 8
         var blockedUntil: [String: Date] = [:]   // providerId → retry not before
-        var queue = entries
         var retried: Set<String> = []            // entries given their one retry
-        var done = 0
+        var exhaustedAccounts: Set<String> = []
 
         await withTaskGroup(of: (String, String, LatencyProbe).self) { group in
             var inFlight = 0
+            var scheduled: [String: String] = [:]
+            var lastStartedAccount: String?
 
-            /// Take the next entry whose provider is not cooling down.
+            /// Never fill all slots from one account; prefer another account
+            /// on each launch so a large aggregator cannot starve smaller ones.
             func nextReady() -> ModelEntry? {
                 let now = Date()
-                return queue.first { entry in
-                    guard let until = blockedUntil[entry.providerInstanceId] else { return true }
+                let occupied = activeLatencyProbes.merging(scheduled) { current, _ in current }
+                guard occupied.count < globalLimit else { return nil }
+                let ready = queue.filter { entry in
+                    let providerId = entry.providerInstanceId
+                    guard occupied[entry.id] == nil,
+                          occupied.values.filter({ $0 == providerId }).count < accountLimit else { return false }
+                    guard let until = blockedUntil[providerId] else { return true }
                     return now >= until
                 }
+                return ready.first { $0.providerInstanceId != lastStartedAccount } ?? ready.first
             }
 
             func pump() {
-                while inFlight < concurrency, let entry = nextReady() {
+                enqueueRequestedEntries()
+                while inFlight < globalLimit, let entry = nextReady() {
                     queue.removeAll { $0.id == entry.id }
+                    // A provider still returning 429 after its one retry is
+                    // skipped for this run. Count every skipped row, not 17/100
+                    // forever, and leave its existing badge untouched.
+                    if exhaustedAccounts.contains(entry.providerInstanceId) {
+                        done += 1
+                        speedTestStatus.skipped += 1
+                        reportProgress()
+                        continue
+                    }
                     inFlight += 1
+                    scheduled[entry.id] = entry.providerInstanceId
+                    lastStartedAccount = entry.providerInstanceId
                     group.addTask {
-                        let probe = await self.measureLatency(entry: entry, sessionId: sessionId)
+                        let probe = await self.measureLatency(entry: entry, sessionId: sessionId,
+                                                             timeout: perEntryTimeout)
                         return (entry.id, entry.providerInstanceId, probe)
                     }
                 }
@@ -453,6 +605,10 @@ final class ChatOptimizer {
 
             pump()
             while inFlight > 0 || !queue.isEmpty {
+                if Task.isCancelled {
+                    group.cancelAll()
+                    break
+                }
                 // Nothing in flight and nothing ready: everything left is
                 // cooling down. Sleep until the earliest block lifts, drop the
                 // blocks that have now expired, and try once more. If nothing is
@@ -473,26 +629,33 @@ final class ChatOptimizer {
 
                 guard let (id, providerId, probe) = await group.next() else { break }
                 inFlight -= 1
+                scheduled.removeValue(forKey: id)
+                guard !Task.isCancelled else { group.cancelAll(); break }
 
                 if let lat = probe.seconds {
                     updated.entries[id] = lat
                     updated.unavailable.removeAll { $0 == id }   // recovered
                     updated.errors.removeValue(forKey: id)
                     done += 1
-                    progress?(done, entries.count)
+                    reportProgress()
                     publish(id: id, seconds: lat, error: nil)
                 } else if Self.isThrottle(probe) {
-                    // [T-speedtest-throttle] The ACCOUNT is rate limited, not
-                    // this model: leave no error behind and back this provider
-                    // off. Its row keeps waiting and gets one retry.
+                    // Keep a known latency on account throttles. It is not a
+                    // model defect, and must not erase a working model's badge.
                     updated.errors.removeValue(forKey: id)
-                    blockedUntil[providerId] = Date().addingTimeInterval(throttleCooldown)
-                    if !retried.contains(id), let original = entries.first(where: { $0.id == id }) {
+                    if !exhaustedAccounts.contains(providerId), !retried.contains(id),
+                       let original = entries.first(where: { $0.id == id }) {
+                        blockedUntil[providerId] = Date().addingTimeInterval(throttleCooldown)
                         retried.insert(id)
                         queue.append(original)
+                    } else {
+                        exhaustedAccounts.insert(providerId)
+                        blockedUntil.removeValue(forKey: providerId)
+                        done += 1
+                        reportProgress()
                     }
-                    logger.info("[latency] \(providerId.prefix(8)) throttled; backing off, \(queue.count) pending")
-                    publish(id: id, seconds: nil, error: nil)   // clear any badge
+                    logger.info("[latency] \(providerId.prefix(8)) throttled; \(queue.count) pending")
+                    publish(id: id, seconds: updated.entries[id], error: nil)
                 } else {
                     // [T-speedtest-soft-fail] A failed speed test is NOT proof the
                     // model is unusable — transient network/auth blips would wrongly
@@ -500,25 +663,27 @@ final class ChatOptimizer {
                     // for the UI, and do NOT add it to `unavailable` (which feeds
                     // auto-switch). The grey wifi is driven by `errors`, not
                     // `unavailable`.
+                    updated.entries.removeValue(forKey: id)
                     updated.errors[id] = probe.error
                     done += 1
-                    progress?(done, entries.count)
+                    reportProgress()
                     publish(id: id, seconds: nil, error: probe.error)
                 }
-                // [T-speedtest-frame-gap] Let the main run loop render the row
-                // before dispatching the next serial probe. `Task.yield()` only
-                // hands execution to another Swift task; the same MainActor task
-                // can immediately resume before SwiftUI gets a display frame,
-                // so rapid responses were still coalesced into one late update.
-                // A short suspension gives Combine/SwiftUI a real opportunity to
-                // apply this entry's badge while the next model is still queued.
-                if concurrency == 1, (!queue.isEmpty || inFlight > 0) {
-                    try? await Task.sleep(nanoseconds: 50_000_000)
-                }
+                // Network awaits, not display sleeps, yield the main actor.
+                // Every result already published to the stable leaf observer.
                 pump()
             }
         }
 
+        if !Task.isCancelled, !queue.isEmpty {
+            // No schedulable work remains: only permits held by cancelled but
+            // uncooperative openers. Do not wait forever or launch more traffic.
+            // Unmeasured rows keep their previous result; never invent failures.
+            speedTestStatus.skipped += queue.count
+            done += queue.count
+            queue.removeAll()
+            reportProgress()
+        }
         // Persist once at the end: the cache only needs to be durable between
         // runs. Writing it per completion was a JSON encode + disk write on the
         // main actor for every probe — pure cost, no benefit.
@@ -526,12 +691,9 @@ final class ChatOptimizer {
         NotificationCenter.default.post(name: ChatOptimizer.latencyUpdatedNotification, object: nil)
     }
 
-    /// Posted after a background speed test finishes so list rows can refresh.
-    ///
-    /// [T-speedtest-live-update] `userInfo` may carry
-    /// `latencyChangedIdsKey` — the entry ids this publish touched. The picker
-    /// patches just those rows; an absent list means "re-read everything"
-    /// (the end of a run, or a wholesale cache reset).
+    /// Compatibility signal for non-observing consumers. Named payloads carry
+    /// one result; an absent payload means read `latencyCache` (the live memory
+    /// snapshot), never decode an older disk snapshot over an active run.
     static let latencyUpdatedNotification = Notification.Name("chatOptimizer.latencyUpdated")
     static let latencyChangedIdsKey = "entryIds"
     /// A live publish carries the measured value (Double) or the error (String)
@@ -730,6 +892,8 @@ final class ChatOptimizer {
     /// Safe to call from app launch / picker appear. No-op if already populated.
     /// `sessionId` is a real session used so OpenCode-routed models can be tested.
     func ensureLatencyDataOnce(sessionId: String?) async {
+        // Never clean disk/cache underneath a run holding its working snapshot.
+        guard !speedTestStatus.running else { return }
         // [T-speedtest-throttle] An earlier run could have been throttled and
         // recorded "Rate limited" against every model of that provider, which
         // painted whole sections red. Those are account facts, not model
@@ -747,10 +911,7 @@ final class ChatOptimizer {
             logger.info("[latency] cleared \(staleThrottle.count) stale throttle error(s)")
         }
         guard cache.entries.isEmpty else { return }
-        // [T-speedtest-sequential] Serial here too: this fires on the picker's
-        // first appear, and 6 concurrent probes on the main actor made that
-        // first open stutter before the user even asked for a test.
-        await speedTestAll(sessionId: sessionId, concurrency: 1)
+        await speedTestAll(sessionId: sessionId)
     }
 
     /// Public read-only view of the latency cache for UI (model picker badges).

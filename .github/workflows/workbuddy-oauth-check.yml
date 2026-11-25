@@ -40,6 +40,7 @@ jobs:
           set -euo pipefail
           for file in \
             src/ios/Agent/Chat/ChatOptimizer.swift \
+            src/ios/Views/Providers/UnifiedModelPicker.swift \
             src/ios/Agent/Chat/ChatModels.swift \
             src/ios/Agent/Chat/AIChatViewModel+Fallback.swift \
             src/ios/Agent/Chat/AIChatViewModel+SSEStream.swift \

@@ -15,6 +15,7 @@ from pathlib import Path
 import argparse
 import re
 import sys
+import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 OPT = ROOT / "src/ios/Agent/Chat/ChatOptimizer.swift"
@@ -60,21 +61,21 @@ CHECKS = [
     (PICKER, "rows show the failure marker as a soft signal", "} else if failed {"),
     (PICKER, "wifi greys out only for provider-delisted models",
      "entry.isUnavailableFromProvider"),
-    (PICKER, "cache is read from UserDefaults, not the MainActor",
-     "UserDefaults.standard.data(forKey: \"chatOptimizer.latencyCache\")"),
-    (PICKER, "a live publish patches the badge store", "badges.apply(ids: ids, seconds: seconds, error: error)"),
-    (PICKER, "badges are a reference type, not view state", "final class LatencyBadgeStore: ObservableObject"),
+    (OPT, "cache is loaded once at optimizer initialization",
+     "UserDefaults.standard.data(forKey: ChatOptimizerSettings.latencyCacheKey)"),
+    (OPT, "live results update the in-memory snapshot", "latencyState.cache = updated"),
+    (OPT, "badges are backed by a stable reference", "final class ModelLatencyState: ObservableObject"),
     (OPT, "results publish while the run is in flight", "func publish(id: String, seconds: Double?, error: String?)"),
     (OPT, "each completion publishes its own entry", "publish(id: id, seconds: lat, error: nil)"),
     (OPT, "a publish names the entries that changed", "latencyChangedIdsKey"),
     (OPT, "a publish carries the value itself", "latencySecondsKey"),
     (OPT, "the cache is not rewritten per probe", "Persist once at the end"),
-    (PICKER, "the picker patches only the named rows", "badges.apply(ids: ids, seconds: seconds, error: error)"),
-    (PICKER, "each row observes the shared store", "LatencyBadgeCell(store: badges, entryId: entry.id)"),
+    (PICKER, "badge leaves observe the shared snapshot", "@ObservedObject private var store = ChatOptimizer.shared.latencyState"),
+    (PICKER, "each row has a concrete badge cell", "LatencyBadgeCell(entryId: entry.id)"),
     (PICKER, "the list body reads no speed-test state", "List {\n            if let note = config.headerNote"),
-    (PICKER, "state is held without subscribing the list", "@State private var badges = LatencyBadgeStore()"),
+    (OPT, "optimizer owns the stable snapshot", "let latencyState: ModelLatencyState"),
     (PICKER, "progress is isolated in its own button", "private struct SpeedTestButton: View"),
-    (PICKER, "a full publish adopts the whole cache", "badges.adopt(Self.currentLatencyBadges())"),
+    (PICKER, "progress observes shared run state", "@ObservedObject private var status = ChatOptimizer.shared.speedTestStatus"),
     (SETTINGS, "settings offers the auto-pick switch", "chatOptimizer.autoPickFastest"),
     (SETTINGS, "settings section header is localizable", "Text(\"Chat Auto-Helpers\")"),
     (SETTINGS, "settings offers the auto-switch toggle", "chatOptimizer.autoSwitchUnavailable"),
@@ -85,7 +86,7 @@ CHECKS = [
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--static-only", action="store_true")
-    parser.parse_args()
+    args = parser.parse_args()
 
     ok = True
     for path, name, needle in CHECKS:
@@ -105,9 +106,10 @@ def main() -> int:
         ("other providers keep going", "return now >= until"),
         ("a throttled row is retried once", "queue.append(original)"),
         ("stale throttle errors are cleared before deciding", "cleared \\(staleThrottle.count) stale throttle error"),
-        ("manual test runs serially so results appear one by one", "concurrency: 1,"),
-        ("serial test gives SwiftUI a display interval", "Task.sleep(nanoseconds: 50_000_000)"),
-        ("next probe starts only after the render interval", "await Task.sleep(nanoseconds: 50_000_000)\n                }\n                pump()"),
+        ("manual test uses bounded concurrency", "concurrency: Int = 4"),
+        ("each account has its own concurrency limit", "let accountLimit = min(2, globalLimit)"),
+        ("deadline is passed through to each probe", "timeout: perEntryTimeout"),
+        ("reentrant callers join instead of racing", "await withCheckedContinuation { speedTestWaiters.append($0) }"),
     ]
     for name, needle in checks:
         found = needle in throttle or needle in PICKER.read_text()
@@ -172,13 +174,20 @@ def main() -> int:
     row = picker.split("private func entryRow(_ entry: ModelEntry)", 1)[1].split(".opacity(disabled", 1)[0]
     trailing = (row.index('Image(systemName: "wifi")')
                 < row.index("quickTestButton(entry)")
-                < row.index("LatencyBadgeCell(store: badges, entryId: entry.id)"))
-    reserved = ".frame(minWidth: 40, alignment: .trailing)" in row
-    print(("PASS" if trailing and reserved else "FAIL") + ": latency result is rightmost with a reserved trailing slot")
+                < row.index("LatencyBadgeCell(entryId: entry.id)"))
+    cell = picker.split("private struct LatencyBadgeCell: View", 1)[1].split("private struct SpeedTestButton", 1)[0]
+    reserved = ('ZStack(alignment: .trailing)' in cell and 'Color.clear' in cell
+                and '.frame(width: 48, height: 18, alignment: .trailing)' in cell)
+    print(("PASS" if trailing and reserved else "FAIL") + ": latency result is rightmost with a concrete fixed slot")
     ok &= trailing and reserved
 
-    print("SKIP: Swift runtime tests (static checks only)" if ok else "FAILED")
-    return 0 if ok else 1
+    if ok:
+        command = [sys.executable, str(ROOT / "scripts/test_speedtest_regression.py")]
+        if args.static_only:
+            command.append("--static-only")
+        return subprocess.run(command, check=False).returncode
+    print("FAILED")
+    return 1
 
 
 if __name__ == "__main__":

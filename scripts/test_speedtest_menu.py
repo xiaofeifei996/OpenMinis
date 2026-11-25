@@ -68,7 +68,7 @@ geometry = helper[helper.index('private enum SpeedTestMenuLayout'):helper.index(
 with tempfile.TemporaryDirectory(prefix='speedtest-menu-') as temp:
     temp = Path(temp)
     swift = temp / 'Geometry.swift'
-    swift.write_text('import Foundation\n' + geometry + '''
+    swift.write_text('import Foundation\nimport CoreGraphics\n' + geometry + '''
 let safe = CGRect(x: 12, y: 60, width: 296, height: 520)
 for x in [-100.0, 0, 160, 319, 800] {
     for y in [-100.0, 60, 300, 570, 900] {

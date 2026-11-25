@@ -168,6 +168,15 @@ def main() -> int:
     print(("PASS" if softened else "FAIL") + ": no speed-test path hard-excludes a model")
     ok &= softened
 
+    picker = PICKER.read_text()
+    row = picker.split("private func entryRow(_ entry: ModelEntry)", 1)[1].split(".opacity(disabled", 1)[0]
+    trailing = (row.index('Image(systemName: "wifi")')
+                < row.index("quickTestButton(entry)")
+                < row.index("LatencyBadgeCell(store: badges, entryId: entry.id)"))
+    reserved = ".frame(minWidth: 40, alignment: .trailing)" in row
+    print(("PASS" if trailing and reserved else "FAIL") + ": latency result is rightmost with a reserved trailing slot")
+    ok &= trailing and reserved
+
     print("SKIP: Swift runtime tests (static checks only)" if ok else "FAILED")
     return 0 if ok else 1
 

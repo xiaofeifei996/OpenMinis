@@ -1589,20 +1589,20 @@ struct UnifiedModelPicker: View {
                 // column takes the free width instead of a Spacer.
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                // [T-latency-order] Match reference build: latency badge / red-x on
-                // the left, wifi icon rightmost.
-                // [T-speedtest-live-update] Its own view so only this row reacts
-                // to this entry's value.
-                LatencyBadgeCell(store: badges, entryId: entry.id)
-
-                // [T-optimize-prompt] Availability wifi icon on the trailing edge.
-                // Green = reachable; grey = unavailable (provider delisted it).
+                // Availability stays before the trailing latency result.
                 Image(systemName: "wifi")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(isEntryUnavailable(entry) ? Color(UIColor.tertiaryLabel) : Color.green)
                     .frame(width: 18)
 
                 quickTestButton(entry)
+
+                // [T-latency-trailing] Keep the result at the far right, after
+                // all controls. Reserve a slot even before a result arrives so
+                // live updates never shift the wifi icon or quick-test button.
+                LatencyBadgeCell(store: badges, entryId: entry.id)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(minWidth: 40, alignment: .trailing)
         }
         .opacity(disabled ? 0.6 : 1)
         .contentShape(Rectangle())

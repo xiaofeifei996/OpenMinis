@@ -287,6 +287,35 @@ struct UnifiedModelPicker: View {
     /// [T-quota-badge-ui] The provider whose quota detail sheet is open from its
     /// header pill. Hosted here like `editingProvider`, not on the header.
     @State private var quotaDetailProvider: ProviderEditTarget?
+    private struct DiagnosticsFile: Identifiable {
+        let id = UUID()
+        let url: URL
+    }
+    @State private var diagnosticsFile: DiagnosticsFile?
+
+    private func exportSpeedTestDiagnostics() {
+        let snapshot = ModelLatencyDiagnostics.shared.snapshot()
+        Task { @MainActor in
+            let url = await Task.detached(priority: .utility) { () -> URL? in
+                let url = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("speedtest-diagnostics-\(UUID().uuidString).json")
+                do {
+                    try ModelLatencyDiagnostics.encode(snapshot).write(to: url, atomically: true, encoding: .utf8)
+                    return url
+                } catch { return nil }
+            }.value
+            if let url { diagnosticsFile = DiagnosticsFile(url: url) }
+            else { MinisToast.show(String(localized: "Could not export speed-test diagnostics", table: "SpeedTest")) }
+        }
+    }
+
+    private var diagnosticsExportButton: some View {
+        Button(action: exportSpeedTestDiagnostics) {
+            Label {
+                Text("Export speed-test diagnostics", tableName: "SpeedTest")
+            } icon: { Image(systemName: "square.and.arrow.up") }
+        }
+    }
     // Speed-test state is owned by ChatOptimizer for the process lifetime.
     // Only leaf views observe it: rebuilding this picker cannot disconnect a
     // callback from its badge object or reset the toolbar's in-flight state.
@@ -712,6 +741,7 @@ struct UnifiedModelPicker: View {
         .navigationTitle(config.title)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
+            ModelLatencyDiagnostics.shared.record("picker-appear", source: isMulti ? "multi" : "single")
             // [T-picker-cache-first] Cache read is synchronous, so a warm open
             // already has its rows on this first frame; the rebuild is deferred.
             loadSections()
@@ -765,6 +795,9 @@ struct UnifiedModelPicker: View {
             QuotaDetailSheet(instanceId: target.id)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $diagnosticsFile) { file in
+            MinisShareSheet(url: file.url)
         }
         .sheet(item: $quickTestEntry) { entry in
             // [T-quicktest-stale-session] .id(entry.id) forces a FRESH view
@@ -896,6 +929,7 @@ struct UnifiedModelPicker: View {
                         )
                     }
                 }
+                .contextMenu { diagnosticsExportButton }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Done") { dismiss() }
@@ -974,6 +1008,7 @@ struct UnifiedModelPicker: View {
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("expand-group-" + group.id)
         }
         .contentShape(Rectangle())
         .onTapGesture {
@@ -1215,6 +1250,12 @@ struct UnifiedModelPicker: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             quickTestButton(entry)
+
+            // Group members are a second rendering path for the SAME entry.
+            // Previously only API rows mounted an observer, so this visible
+            // copy could never display a completed measurement.
+            LatencyBadgeCell(entryId: entry.id, source: "group")
+                .id(entry.id)
         }
         .contentShape(Rectangle())
         .onTapGesture {
@@ -1427,6 +1468,7 @@ struct UnifiedModelPicker: View {
                                     instanceId: item.instance.id, sessionId: config.currentSessionId?())
                             }
                         }
+                        .contextMenu { diagnosticsExportButton }
                     }
                     // [T-picker-provider-edit] Edit sits LEFT of the chevron and is
                     // its own plain button, so a tap here never folds the section.
@@ -1601,41 +1643,30 @@ struct UnifiedModelPicker: View {
     private struct LatencyBadgeCell: View {
         @ObservedObject private var state: ModelLatencyEntryState
         let entryId: String
+        let source: String
 
-        init(entryId: String) {
-            self.init(entryId: entryId, optimizer: ChatOptimizer.shared)
+        init(entryId: String, source: String = "api") {
+            self.init(entryId: entryId, optimizer: ChatOptimizer.shared, source: source)
         }
 
-        init(entryId: String, optimizer: ChatOptimizer) {
+        init(entryId: String, optimizer: ChatOptimizer, source: String = "api") {
             self.entryId = entryId
+            self.source = source
             _state = ObservedObject(wrappedValue: optimizer.latencyState.entry(id: entryId))
         }
 
         var body: some View {
-            // Only the running leaf has a timeline. Ticks neither publish state
-            // nor invalidate the List, other badges, or account/global controls.
-            // The concrete clear child reserves the SAME 48pt in every phase.
+            let _ = ModelLatencyDiagnostics.shared.badgeBody(id: entryId, state: state, source: source)
+            // Only completed probes have numeric badges. No elapsed-time
+            // TimelineView, timer, or clock is used while a request is running.
             ZStack(alignment: .trailing) {
                 Color.clear
-                if case .running = state.result.phase {
-                    TimelineView(.periodic(from: .now, by: 0.1)) { context in
-                        let elapsed = state.result.elapsed(at: context.date) ?? 0
-                        let text = String(format: "%.1fs", elapsed)
-                        HStack(spacing: 2) {
-                            Image(systemName: "hourglass").font(.system(size: 7))
-                            Text(text).monospacedDigit()
-                        }
-                        .font(.system(size: 9, weight: .medium))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                        .foregroundStyle(.blue)
-                        .padding(.horizontal, 3)
-                        .padding(.vertical, 1)
-                        .background(Color.blue.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 3))
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(Text("Waiting for first token: \(text) elapsed", tableName: "SpeedTest"))
-                    }
+                if state.result.phase == .running {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .scaleEffect(0.7)
+                        .frame(width: 18, height: 18)
+                        .accessibilityLabel(Text("Latency test running", tableName: "SpeedTest"))
                 } else if state.result.phase == .queued {
                     Image(systemName: "clock")
                         .font(.system(size: 11))
@@ -1648,7 +1679,16 @@ struct UnifiedModelPicker: View {
             }
             .frame(width: 48, height: 18, alignment: .trailing)
             .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("latency-" + entryId)
+            .accessibilityIdentifier("latency-" + source + "-" + entryId)
+            .accessibilityValue(state.result.phase.rawValue)
+            .onAppear {
+                ModelLatencyDiagnostics.shared.record("badge-mounted", id: entryId,
+                    object: state.diagnosticIdentity, phase: state.result.phase, source: source)
+            }
+            .onDisappear {
+                ModelLatencyDiagnostics.shared.record("badge-unmounted", id: entryId,
+                    object: state.diagnosticIdentity, phase: state.result.phase, source: source)
+            }
         }
 
         private var finishedBadge: some View {
@@ -1707,6 +1747,7 @@ struct UnifiedModelPicker: View {
             // subsequent taps cannot start a second run, even from another picker.
             .disabled(status.running && status.includesAllAccounts)
             .accessibilityLabel(Text("Speed-test all models"))
+            .accessibilityIdentifier("speedtest-all")
         }
     }
 
@@ -1749,6 +1790,7 @@ struct UnifiedModelPicker: View {
             // API's full catalog; only an explicit full scope locks the button.
             .disabled(joined != nil && (status.includesAllAccounts || status.fullInstanceIds.contains(instanceId)))
             .accessibilityLabel(Text("Speed-test all models in \(label)"))
+            .accessibilityIdentifier("speedtest-api-" + instanceId)
         }
     }
 

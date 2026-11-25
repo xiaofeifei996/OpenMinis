@@ -41,9 +41,9 @@ struct ModelLatencyCache: Codable {
 
 /// One stable reference per entry: List row reuse never changes its publisher,
 /// and finishing one probe invalidates ONLY the badge that displays that entry.
-enum ModelLatencyPhase: Equatable {
+enum ModelLatencyPhase: String, Equatable {
     case queued
-    case running(startedAt: Date)
+    case running
     case finished
 }
 
@@ -51,23 +51,102 @@ struct ModelLatencyResult: Equatable {
     var seconds: Double?
     var error: String?
     var phase: ModelLatencyPhase = .finished
+}
 
-    /// Only a dispatched request has elapsed time. Queuing/cooldown is not TTFT.
-    func elapsed(at date: Date) -> Double? {
-        switch phase {
-        case .queued: return nil
-        case .running(let start): return max(0, date.timeIntervalSince(start))
-        case .finished: return seconds
+/// Bounded, memory-only trace of the REAL app chain. No URL, credential,
+/// prompt, model name, or free-form provider error can enter this schema.
+/// Entry/account aliases remain stable for this process; state tokens identify
+/// the exact ObservableObject even across duplicate group/API rows.
+@MainActor
+final class ModelLatencyDiagnostics {
+    static let shared = ModelLatencyDiagnostics()
+    struct Event: Codable, Sendable {
+        let uptime: Double
+        let run: Int
+        let event: String
+        let entry: String?
+        let account: String?
+        let object: String?
+        let phase: String?
+        let source: String?
+        let delayMs: Double?
+    }
+    struct Snapshot: Codable, Sendable {
+        let version: String
+        let build: String
+        let commit: String
+        let system: String
+        let dropped: Int
+        let events: [Event]
+    }
+    private var events: [Event] = []
+    private var entryAliases: [String: String] = [:]
+    private var accountAliases: [String: String] = [:]
+    private var evaluations: [String: UInt] = [:]
+    private var run = 0
+    private var dropped = 0
+
+    func begin() {
+        run += 1
+        record("run-begin")
+    }
+    func record(_ event: String, id: String? = nil, account: String? = nil,
+                object: String? = nil, phase: ModelLatencyPhase? = nil,
+                source: String? = nil, delayMs: Double? = nil) {
+        let entryAlias = id.map { id -> String in
+            if let alias = entryAliases[id] { return alias }
+            let alias = "e\(entryAliases.count + 1)"
+            entryAliases[id] = alias
+            return alias
         }
+        let accountAlias = account.map { id -> String in
+            if let alias = accountAliases[id] { return alias }
+            let alias = "a\(accountAliases.count + 1)"
+            accountAliases[id] = alias
+            return alias
+        }
+        if events.count >= 6000 {
+            events.removeFirst(1000)
+            dropped += 1000
+        }
+        events.append(Event(uptime: ProcessInfo.processInfo.systemUptime,
+            run: run, event: event, entry: entryAlias, account: accountAlias,
+            object: object, phase: phase?.rawValue, source: source, delayMs: delayMs))
+    }
+    /// Body evaluation is NOT proof of pixels on glass. Export names it
+    /// explicitly; actual iOS screen updates still require device validation.
+    func badgeBody(id: String, state: ModelLatencyEntryState, source: String) {
+        let key = source + "/" + state.diagnosticIdentity
+        guard evaluations[key] != state.revision else { return }
+        evaluations[key] = state.revision
+        record("badge-body", id: id, object: state.diagnosticIdentity,
+               phase: state.result.phase, source: source)
+    }
+    func snapshot() -> Snapshot {
+        Snapshot(version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
+            build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "",
+            commit: Bundle.main.object(forInfoDictionaryKey: "SpeedTestBuildCommit") as? String ?? "unknown",
+            system: ProcessInfo.processInfo.operatingSystemVersionString,
+            dropped: dropped, events: events)
+    }
+    nonisolated static func encode(_ snapshot: Snapshot) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return (try? encoder.encode(snapshot)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
     }
 }
 
 @MainActor
 final class ModelLatencyEntryState: ObservableObject {
+    let diagnosticIdentity = String(UUID().uuidString.prefix(8))
+    private(set) var revision: UInt = 0
     @Published private(set) var result: ModelLatencyResult
     init(result: ModelLatencyResult) { self.result = result }
     func update(_ result: ModelLatencyResult) {
-        if self.result != result { self.result = result }
+        if self.result != result {
+            revision &+= 1
+            self.result = result
+        }
     }
 }
 
@@ -83,6 +162,7 @@ final class ModelLatencyState {
         if let existing = entries[id] { return existing }
         let state = ModelLatencyEntryState(result: result(id: id))
         entries[id] = state
+        ModelLatencyDiagnostics.shared.record("state-created", id: id, object: state.diagnosticIdentity)
         return state
     }
     private func result(id: String) -> ModelLatencyResult {
@@ -90,11 +170,17 @@ final class ModelLatencyState {
     }
     func enqueue(id: String) {
         entry(id: id).update(ModelLatencyResult(seconds: nil, error: nil, phase: .queued))
+        ModelLatencyDiagnostics.shared.record("queued", id: id, phase: .queued)
     }
     func start(id: String, at date: Date) {
-        entry(id: id).update(ModelLatencyResult(seconds: nil, error: nil, phase: .running(startedAt: date)))
+        entry(id: id).update(ModelLatencyResult(seconds: nil, error: nil, phase: .running))
+        ModelLatencyDiagnostics.shared.record("probe-start", id: id, phase: .running)
     }
-    func publish(id: String) { entries[id]?.update(result(id: id)) }
+    func publish(id: String) {
+        guard let state = entries[id] else { return }
+        state.update(result(id: id))
+        ModelLatencyDiagnostics.shared.record("publish", id: id, object: state.diagnosticIdentity, phase: .finished)
+    }
     /// Stop clocks for cancelled/unschedulable rows without inventing a result.
     /// Retained cache values keep the existing soft-failure/skip semantics.
     func finishPending(id: String) {
@@ -142,10 +228,13 @@ private final class LatencyProbeRace {
     var request: Task<Void, Never>?
     var timer: Task<Void, Never>?
     private var finished = false
+    var entryId: String?
 
     func finish(_ result: LatencyProbe) {
         guard !finished else { return }
         finished = true
+        ModelLatencyDiagnostics.shared.record("probe-finish", id: entryId,
+            source: result.seconds != nil ? "success" : (result.error == "first-token timeout" ? "deadline" : "failure"))
         let continuation = self.continuation
         self.continuation = nil
         request?.cancel()
@@ -412,6 +501,8 @@ final class ChatOptimizer {
             return LatencyProbe(seconds: nil, error: "previous probe still stopping")
         }
         let race = LatencyProbeRace()
+        race.entryId = entry.id
+        ModelLatencyDiagnostics.shared.record("probe-acquired", id: entry.id, account: entry.providerInstanceId)
         activeLatencyProbes[entry.id] = entry.providerInstanceId
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
@@ -426,11 +517,14 @@ final class ChatOptimizer {
                     self.latencyState.start(id: entry.id, at: startedAt)
                     let result = await self.performLatencyProbe(entry: entry, sessionId: sessionId,
                                                                 startedAt: startedAt)
+                    ModelLatencyDiagnostics.shared.record("request-return", id: entry.id,
+                        source: result.seconds == nil ? "failure" : "success")
                     race.finish(result)
                 }
                 race.timer = Task { @MainActor in
                     do {
                         try await Task.sleep(nanoseconds: UInt64(max(0.01, timeout) * 1_000_000_000))
+                        ModelLatencyDiagnostics.shared.record("deadline", id: entry.id)
                         race.finish(LatencyProbe(seconds: nil, error: "first-token timeout"))
                     } catch { /* another outcome won */ }
                 }
@@ -454,21 +548,26 @@ final class ChatOptimizer {
         }()
         do {
             try Task.checkCancellation()
+            ModelLatencyDiagnostics.shared.record("factory-begin", id: entry.id)
             let provider = try await LLMProviderFactory.makeProvider(for: entry, sessionId: effectiveSessionId)
+            ModelLatencyDiagnostics.shared.record("factory-end", id: entry.id)
             try Task.checkCancellation()
             // Use the streaming path so we can capture time-to-first-token.
             // [T-latency-min-output] Many OpenAI-compat services reject a tiny
             // max_tokens with HTTP 400, so a WORKING model showed the red ✗. The
             // probe is streaming and returns on the FIRST token, so a large
             // max_tokens costs nothing in latency.
+            ModelLatencyDiagnostics.shared.record("stream-open-begin", id: entry.id, source: "plain")
             let stream = try await provider.streamMessage(
                 messages: messages,
                 systemPrompt: nil,
                 maxTokens: 256,
                 temperature: 0
             )
+            ModelLatencyDiagnostics.shared.record("stream-open-end", id: entry.id, source: "plain")
             for try await chunk in stream {
                 if case .text(let t) = chunk, !t.isEmpty {
+                    ModelLatencyDiagnostics.shared.record("first-token", id: entry.id, source: "plain")
                     return LatencyProbe(seconds: Date().timeIntervalSince(start), error: nil)
                 }
             }
@@ -490,6 +589,7 @@ final class ChatOptimizer {
             // Retry once through the agent-shaped request before recording a
             // failure: a model that chats must not be reported as broken.
             logger.info("[latency] \(entry.id) plain probe failed (\(msg)); retrying via agent path")
+            ModelLatencyDiagnostics.shared.record("fallback-begin", id: entry.id, source: "agent")
             if let agentProbe = await probeViaAgentPath(entry: entry, startedAt: start) { return agentProbe }
             logger.warning("[latency] \(entry.id) failed: \(msg)")
             return LatencyProbe(seconds: nil, error: msg)
@@ -526,6 +626,7 @@ final class ChatOptimizer {
             )
             for try await event in stream {
                 if case .textDelta(let t) = event, !t.isEmpty {
+                    ModelLatencyDiagnostics.shared.record("first-token", id: entry.id, source: "agent")
                     return LatencyProbe(seconds: Date().timeIntervalSince(start), error: nil)
                 }
             }
@@ -548,6 +649,9 @@ final class ChatOptimizer {
                       includeAllAccounts: Bool = false, instanceId: String? = nil,
                       progress: ((Int, Int) -> Void)? = nil) async {
         guard !Task.isCancelled else { return }
+        if !speedTestStatus.running { ModelLatencyDiagnostics.shared.begin() }
+        ModelLatencyDiagnostics.shared.record("scope-request", account: instanceId,
+            source: instanceId != nil ? "api" : (includeAllAccounts ? "all" : "automatic"))
         if !speedTestStatus.running {
             includeAllAccountsRequested = false
             includeAvailableRequested = false
@@ -574,8 +678,25 @@ final class ChatOptimizer {
             return
         }
         speedTestStatus.running = true // acquired before the first suspension
+        // A probe-independent heartbeat only records stalls (>150ms), never
+        // publishes UI state, and is cancelled with its batch. This distinguishes
+        // a blocked MainActor from a missing SwiftUI subscription on a device.
+        let responsiveness = Task.detached(priority: .utility) {
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 500_000_000) } catch { return }
+                let enqueued = ProcessInfo.processInfo.systemUptime
+                await MainActor.run {
+                    let delay = (ProcessInfo.processInfo.systemUptime - enqueued) * 1000
+                    if delay > 150 {
+                        ModelLatencyDiagnostics.shared.record("main-actor-lag", delayMs: delay)
+                    }
+                }
+            }
+        }
         speedTestStatus.skipped = 0
         defer {
+            responsiveness.cancel()
+            ModelLatencyDiagnostics.shared.record("run-end")
             speedTestStatus.running = false
             speedTestStatus.progress = nil
             let waiters = speedTestWaiters
@@ -752,6 +873,7 @@ final class ChatOptimizer {
                 }
 
                 guard let (id, providerId, probe) = await group.next() else { break }
+                ModelLatencyDiagnostics.shared.record("group-next", id: id, account: providerId)
                 inFlight -= 1
                 scheduled.removeValue(forKey: id)
                 guard !Task.isCancelled else { group.cancelAll(); break }

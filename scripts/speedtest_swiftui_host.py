@@ -90,35 +90,6 @@ def run_swiftui_test(harness, picker, tmp):
     }
     fatalError("SwiftUI List did not render latency=\(latency), failed=\(failed): \(last)")
 }
-// This reads the rendered one-row List bitmap, never the state or an
-// accessibility label. OCR may confuse the seconds glyph, so parse the number.
-@MainActor func clockReading(_ window: NSWindow, name: String) async throws -> Double {
-    let pattern = try NSRegularExpression(pattern: #"([0-9]+)[.,]([0-9])"#)
-    for _ in 0..<60 {
-        let (_, _, rep) = try rendered(window)
-        // The 500pt one-row fixture samples sub-10-second readings. Crop its
-        // right-aligned numeric text, excluding the separate hourglass glyph:
-        // Vision otherwise sometimes reads the icon + 0.0s as "20.0s".
-        let numeric = rep.cgImage!.cropping(to: CGRect(x: CGFloat(rep.pixelsWide - 125),
-            y: 0, width: 100, height: CGFloat(rep.pixelsHigh)))!
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = false
-        request.minimumTextHeight = 0
-        try VNImageRequestHandler(cgImage: numeric, options: [:]).perform([request])
-        let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined()
-        let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        if let match = pattern.firstMatch(in: text, range: range),
-           let numberRange = Range(match.range, in: text),
-           let value = Double(text[numberRange].replacingOccurrences(of: ",", with: ".")) {
-            try save(rep, name: name)
-            return value
-        }
-        try save(rep, name: "clock-ocr-failure")
-        try await Task.sleep(nanoseconds: 50_000_000)
-    }
-    fatalError("No elapsed seconds found in mounted SwiftUI List bitmap")
-}
 @main struct SwiftUIRegression {
     @MainActor static func main() async throws {
         _ = NSApplication.shared
@@ -131,33 +102,15 @@ def run_swiftui_test(harness, picker, tmp):
         let leaf = optimizer.latencyState.entry(id: "fast")
         let window = mount(optimizer, ids: ["fast", "pending"])
         try await expect(window, latency: false, name: "unmeasured")
-        let clockWindow = mount(optimizer, ids: ["fast"])
         let run = Task { @MainActor in
-            await optimizer.speedTestAll(sessionId: nil, concurrency: 1, perEntryTimeout: 600, includeAllAccounts: true)
+            await optimizer.speedTestAll(sessionId: nil, perEntryTimeout: 600, includeAllAccounts: true)
         }
-        for _ in 0..<1000 {
-            if optimizer.held["fast"] != nil { break }
-            try await Task.sleep(nanoseconds: 1_000_000)
+        for _ in 0..<100 {
+            if optimizer.held.count == 2 { break }
+            await Task.yield()
         }
-        assert(optimizer.held.count == 1)
-        assert(optimizer.latencyState.entry(id: "pending").result.phase == .queued)
-        let first = try await clockReading(clockWindow, name: "running-first")
-        try await Task.sleep(nanoseconds: 400_000_000)
-        let second = try await clockReading(clockWindow, name: "running-later")
-        assert(second - first >= 0.2, "Mounted TimelineView pixels did not advance: \(first) -> \(second)")
-        assert(optimizer.held["fast"] != nil && optimizer.speedTestStatus.running)
-        let (_, _, queuedBitmap) = try rendered(window)
-        try save(queuedBitmap, name: "running-and-queued")
-        print("PASS: real mounted SwiftUI TimelineView bitmap elapsed advances while the production request is held: \(first)s -> \(second)s")
+        assert(optimizer.held.count == 2)
         optimizer.held.removeValue(forKey: "fast")!.resume()
-        try await expect(clockWindow, latency: true, name: "clock-finished")
-        let frozen = try await clockReading(clockWindow, name: "frozen-first")
-        try await Task.sleep(nanoseconds: 450_000_000)
-        let stillFrozen = try await clockReading(clockWindow, name: "frozen-later")
-        assert(frozen == 0.3 && stillFrozen == frozen)
-        assert(leaf.result.phase == .finished && optimizer.held["pending"] != nil)
-        clockWindow.close()
-        print("PASS: real mounted bitmap freezes the final first-token value while the next probe keeps running")
         try await expect(window, latency: true, name: "first-live")
         assert(optimizer.speedTestStatus.running && optimizer.held["pending"] != nil)
         assert(optimizer.latencyState.entry(id: "pending").result.seconds == nil)

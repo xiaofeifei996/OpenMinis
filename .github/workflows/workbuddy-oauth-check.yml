@@ -205,6 +205,7 @@ jobs:
 
           test -d "$APP_PATH"
           test -f "$APP_PATH/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :SpeedTestBuildCommit string $GITHUB_SHA" "$APP_PATH/Info.plist"
           mkdir -p "$GITHUB_WORKSPACE/build"
           # Xcode 26 rejects ad-hoc signing during the build phase. Build unsigned,
           # then ad-hoc sign the finished bundles with the App Group entitlement.

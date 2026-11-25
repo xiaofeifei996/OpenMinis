@@ -84,7 +84,7 @@ struct EnvelopeError: LocalizedError { var errorDescription: String? { "unsuppor
             let leaf = optimizer.latencyState.entry(id: "clock")
             var startedAt: Date?
             let subscription = leaf.$result.sink { result in
-                if case .running(let start) = result.phase { startedAt = start }
+                if result.phase == .running { startedAt = Date() }
             }
             let begin = Date()
             await optimizer.speedTestAll(sessionId: nil, perEntryTimeout: 2, includeAllAccounts: true)
@@ -95,9 +95,9 @@ struct EnvelopeError: LocalizedError { var errorDescription: String? { "unsuppor
             assert(measured >= (fallback ? 0.35 : 0.24))
             assert(Date().timeIntervalSince(begin) < 1.5)
             assert(ProbeNetwork.agentCalls == (fallback ? 1 : 0))
-            assert(leaf.result.elapsed(at: Date().addingTimeInterval(100)) == measured)
+            assert(leaf.result.seconds == measured)
             withExtendedLifetime(subscription) {}
-            print("PASS: unchanged production \(fallback ? "fallback" : "plain") probe shares dispatched clock, includes setup/empty deltas, freezes at first text without EOF (\(measured)s)")
+            print("PASS: unchanged production \(fallback ? "fallback" : "plain") probe starts at dispatch, includes setup/empty deltas, returns at first text without EOF (\(measured)s)")
         }
     }
 }

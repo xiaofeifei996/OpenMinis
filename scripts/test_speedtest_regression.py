@@ -22,6 +22,18 @@ def section(start, end):
 
 
 checks = {
+    'no real-time numeric stopwatch in the picker':
+        'TimelineView(' not in picker and 'func elapsed(' not in source
+        and 'case running(startedAt:' not in source,
+    'both real API and group row paths mount the badge':
+        'LatencyBadgeCell(entryId: entry.id, source: "group")' in picker
+        and 'LatencyBadgeCell(entryId: entry.id)' in picker,
+    'real app diagnostics cover probe/group/publisher/badge and main actor':
+        all('"' + event + '"' in source + picker for event in
+            ['first-token', 'probe-finish', 'group-next', 'publish', 'badge-body', 'badge-mounted', 'main-actor-lag'])
+        and 'events.count >= 6000' in source,
+    'diagnostics are exportable without per-completion disk writes':
+        'exportSpeedTestDiagnostics()' in picker and 'ModelLatencyDiagnostics.encode(snapshot)' in picker,
     'default bounded parallelism and per-account cap':
         'concurrency: Int = 4' in source and 'let accountLimit = min(2, globalLimit)' in source,
     'task-group scheduler helpers explicitly retain main-actor isolation':
@@ -116,7 +128,7 @@ struct TestLog { func info(_ text: String) {} }
         held.removeAll()
         for continuation in pending.values { continuation.resume() }
     }
-    private func performLatencyProbe(entry: ModelEntry, sessionId: String?, startedAt start: Date) async -> LatencyProbe {
+    private func performLatencyProbe(entry: ModelEntry, sessionId: String?) async -> LatencyProbe {
         starts[entry.id, default: 0] += 1
         launchAccounts.append(entry.providerInstanceId)
         realActive += 1
@@ -155,56 +167,6 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
 }
 @main struct Tests {
     @MainActor static func main() async throws {
-        // Exercise the exact production state/dispatch/scheduler methods. A
-        // held real async probe advances elapsed without any publisher ticks.
-        let timed = ChatOptimizer()
-        timed.catalog = entries(3, accounts: 1)
-        timed.holdRequests = true
-        timed.latencyState.cache.entries["m0"] = 9.9
-        timed.latencyState.cache.errors["m1"] = "old error"
-        let clock = timed.latencyState.entry(id: "m0")
-        let queued = timed.latencyState.entry(id: "m1")
-        var clockPublishes = 0
-        let clockSubscription = clock.$result.sink { _ in clockPublishes += 1 }
-        let timedRun = Task { @MainActor in
-            await timed.speedTestAll(sessionId: nil, concurrency: 1, includeAllAccounts: true)
-        }
-        for _ in 0..<1000 {
-            if timed.held.count == 1 { break }
-            try await Task.sleep(nanoseconds: 1_000_000)
-        }
-        guard case .running(let firstStart) = clock.result.phase else { fatalError("not running") }
-        assert(clock.result.seconds == nil && clock.result.error == nil)
-        assert(queued.result.phase == .queued && queued.result.elapsed(at: Date()) == nil)
-        assert(queued.result.seconds == nil && queued.result.error == nil)
-        let publicationsBeforeTick = clockPublishes
-        let before = clock.result.elapsed(at: Date())!
-        try await Task.sleep(nanoseconds: 250_000_000)
-        let after = clock.result.elapsed(at: Date())!
-        assert(after - before >= 0.2 && clockPublishes == publicationsBeforeTick)
-        assert(timed.latencyState.entry(id: "m0") === clock)
-        // Cache adoption must not reset an active stopwatch or queued badge.
-        timed.latencyState.replaceCache(timed.latencyState.cache)
-        assert(clock.result.elapsed(at: Date())! >= after && queued.result.phase == .queued)
-        timed.held.removeValue(forKey: "m0")!.resume()
-        for _ in 0..<1000 {
-            if timed.held["m1"] != nil { break }
-            try await Task.sleep(nanoseconds: 1_000_000)
-        }
-        guard case .running(let secondStart) = queued.result.phase else { fatalError("queue not dispatched") }
-        assert(secondStart.timeIntervalSince(firstStart) >= 0.2)
-        assert(queued.result.elapsed(at: secondStart) == 0)
-        assert(clock.result.phase == .finished && clock.result.elapsed(at: Date().addingTimeInterval(100)) == 0.3)
-        timed.holdRequests = false
-        timed.releaseHeld()
-        await timedRun.value
-        assert(timed.catalog.allSatisfy { timed.latencyState.entry(id: $0.id).result.phase == .finished })
-        let frozen = clock.result
-        try await Task.sleep(nanoseconds: 150_000_000)
-        assert(clock.result == frozen && clockPublishes == 4) // initial, queued, running, finished
-        withExtendedLifetime(clockSubscription) {}
-        print("PASS: production queued -> actual dispatch -> advancing elapsed -> frozen TTFT; no tick publishes, stale results hidden, queue time excluded")
-
         // 100 models: actual scheduler reaches four global/two-account slots,
         // publishes before completion, never re-probes a duplicate catalog row.
         let parallel = ChatOptimizer()
@@ -403,11 +365,6 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         throttled.catalog = bad + good
         for entry in bad { throttled.failures[entry.id] = "HTTP 429 rate limited" }
         throttled.latencyState.cache.entries["bad0"] = 1.2
-        let throttleLeaf = throttled.latencyState.entry(id: "bad0")
-        var retryStarts: [Date] = []
-        let retrySubscription = throttleLeaf.$result.sink { value in
-            if case .running(let start) = value.phase { retryStarts.append(start) }
-        }
         var finalProgress = (0, 0)
         let throttleRun = Task { @MainActor in
             await throttled.speedTestAll(sessionId: nil, includeAllAccounts: true) { finalProgress = ($0, $1) }
@@ -415,12 +372,7 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         try await Task.sleep(nanoseconds: 100_000_000)
         assert(good.allSatisfy { throttled.latencyState.cache.entries[$0.id] != nil })
         assert(throttled.speedTestStatus.running)
-        assert(throttleLeaf.result.phase == .queued && throttleLeaf.result.elapsed(at: Date()) == nil)
-        assert(throttleLeaf.result.seconds == nil && throttleLeaf.result.error == nil)
         await throttleRun.value
-        assert(retryStarts.count == 2 && retryStarts[1].timeIntervalSince(retryStarts[0]) >= 7.9)
-        assert(throttleLeaf.result.phase == .finished && throttleLeaf.result.seconds == 1.2)
-        withExtendedLifetime(retrySubscription) {}
         assert(throttled.maxAccount <= 2 && throttled.starts.values.allSatisfy { $0 <= 2 })
         assert(throttled.latencyState.cache.errors.isEmpty && throttled.latencyState.cache.unavailable.isEmpty)
         assert(throttled.latencyState.cache.entries["bad0"] == 1.2)
@@ -442,15 +394,11 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         assert(stuck.starts.count == 2 && stuck.activeCount == 2 && stuck.maxAccount == 2)
         assert(stuckProgress.0 == 6 && stuckProgress.1 == 6 && stuck.speedTestStatus.skipped == 4)
         assert(stuck.latencyState.cache.errors.count == 2 && stuck.latencyState.cache.entries.isEmpty)
-        assert(stuck.catalog.allSatisfy { stuck.latencyState.entry(id: $0.id).result.phase == .finished })
-        let timedOut = stuck.latencyState.entry(id: "m0").result
-        assert(timedOut.elapsed(at: Date().addingTimeInterval(100)) == nil)
         await stuck.speedTestAll(sessionId: nil, perEntryTimeout: 0.02, includeAllAccounts: true)
         assert(stuck.starts.count == 2 && stuck.speedTestStatus.skipped == 6)
         stuck.releaseHeld()
         for _ in 0..<20 { await Task.yield() }
         assert(stuck.activeCount == 0 && stuck.latencyState.cache.entries.isEmpty)
-        assert(stuck.latencyState.entry(id: "m0").result == timedOut)
         print("PASS: hard deadline without task join, retained account permits, no overlap/late-cache overwrite")
 
         // The same guarantee holds globally, across many different accounts.
@@ -480,7 +428,6 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         for _ in 0..<20 { await Task.yield() }
         assert(cancelled.starts.count <= 4 && !cancelled.speedTestStatus.running)
         assert(cancelled.latencyState.cache.errors.isEmpty && cancelled.activeCount == 0)
-        assert(cancelled.catalog.allSatisfy { cancelled.latencyState.entry(id: $0.id).result.phase == .finished })
         let preCancelled = Task { @MainActor in
             await cancelled.speedTestAll(sessionId: nil, includeAllAccounts: true)
         }

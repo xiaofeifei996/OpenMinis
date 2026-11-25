@@ -41,9 +41,25 @@ struct ModelLatencyCache: Codable {
 
 /// One stable reference per entry: List row reuse never changes its publisher,
 /// and finishing one probe invalidates ONLY the badge that displays that entry.
+enum ModelLatencyPhase: Equatable {
+    case queued
+    case running(startedAt: Date)
+    case finished
+}
+
 struct ModelLatencyResult: Equatable {
     var seconds: Double?
     var error: String?
+    var phase: ModelLatencyPhase = .finished
+
+    /// Only a dispatched request has elapsed time. Queuing/cooldown is not TTFT.
+    func elapsed(at date: Date) -> Double? {
+        switch phase {
+        case .queued: return nil
+        case .running(let start): return max(0, date.timeIntervalSince(start))
+        case .finished: return seconds
+        }
+    }
 }
 
 @MainActor
@@ -72,10 +88,22 @@ final class ModelLatencyState {
     private func result(id: String) -> ModelLatencyResult {
         ModelLatencyResult(seconds: cache.entries[id], error: cache.errors[id])
     }
+    func enqueue(id: String) {
+        entry(id: id).update(ModelLatencyResult(seconds: nil, error: nil, phase: .queued))
+    }
+    func start(id: String, at date: Date) {
+        entry(id: id).update(ModelLatencyResult(seconds: nil, error: nil, phase: .running(startedAt: date)))
+    }
     func publish(id: String) { entries[id]?.update(result(id: id)) }
+    /// Stop clocks for cancelled/unschedulable rows without inventing a result.
+    /// Retained cache values keep the existing soft-failure/skip semantics.
+    func finishPending(id: String) {
+        guard let state = entries[id], state.result.phase != .finished else { return }
+        publish(id: id)
+    }
     func replaceCache(_ cache: ModelLatencyCache) {
         self.cache = cache
-        for id in entries.keys { publish(id: id) }
+        for (id, state) in entries where state.result.phase == .finished { publish(id: id) }
     }
 }
 
@@ -390,7 +418,14 @@ final class ChatOptimizer {
                 race.continuation = continuation
                 race.request = Task { @MainActor in
                     defer { self.activeLatencyProbes.removeValue(forKey: entry.id) }
-                    let result = await self.performLatencyProbe(entry: entry, sessionId: sessionId)
+                    guard !Task.isCancelled else {
+                        race.finish(LatencyProbe(seconds: nil, error: "cancelled"))
+                        return
+                    }
+                    let startedAt = Date()
+                    self.latencyState.start(id: entry.id, at: startedAt)
+                    let result = await self.performLatencyProbe(entry: entry, sessionId: sessionId,
+                                                                startedAt: startedAt)
                     race.finish(result)
                 }
                 race.timer = Task { @MainActor in
@@ -405,7 +440,7 @@ final class ChatOptimizer {
         }
     }
 
-    private func performLatencyProbe(entry: ModelEntry, sessionId: String?) async -> LatencyProbe {
+    private func performLatencyProbe(entry: ModelEntry, sessionId: String?, startedAt start: Date) async -> LatencyProbe {
         let messages: [LLMMessage] = [
             LLMMessage(role: .user, content: "hi")
         ]
@@ -417,7 +452,6 @@ final class ChatOptimizer {
             if let s = sessionId, !s.isEmpty, !s.hasPrefix("__new__") { return s }
             return OpenCodeChannel.oneOffSessionId()
         }()
-        let start = Date()
         do {
             try Task.checkCancellation()
             let provider = try await LLMProviderFactory.makeProvider(for: entry, sessionId: effectiveSessionId)
@@ -456,7 +490,7 @@ final class ChatOptimizer {
             // Retry once through the agent-shaped request before recording a
             // failure: a model that chats must not be reported as broken.
             logger.info("[latency] \(entry.id) plain probe failed (\(msg)); retrying via agent path")
-            if let agentProbe = await probeViaAgentPath(entry: entry) { return agentProbe }
+            if let agentProbe = await probeViaAgentPath(entry: entry, startedAt: start) { return agentProbe }
             logger.warning("[latency] \(entry.id) failed: \(msg)")
             return LatencyProbe(seconds: nil, error: msg)
         }
@@ -474,11 +508,10 @@ final class ChatOptimizer {
     ///
     /// Returns nil when the fallback also fails, so the caller keeps the
     /// original error — the accurate one for a genuinely broken model.
-    private func probeViaAgentPath(entry: ModelEntry) async -> LatencyProbe? {
+    private func probeViaAgentPath(entry: ModelEntry, startedAt start: Date) async -> LatencyProbe? {
         let messages: [AgentMessage] = [
             AgentMessage(role: .user, parts: [.text("hi")])
         ]
-        let start = Date()
         do {
             try Task.checkCancellation()
             let provider = await AIChatViewModel.makeAgentProvider(
@@ -593,6 +626,7 @@ final class ChatOptimizer {
             for entry in requested where knownIds.insert(entry.id).inserted {
                 entries.append(entry)
                 queue.append(entry)
+                latencyState.enqueue(id: entry.id)
                 totalsByInstance[entry.providerInstanceId, default: 0] += 1
             }
             reportProgress()
@@ -611,10 +645,11 @@ final class ChatOptimizer {
         // reported scroll stutter) and coalesced SwiftUI updates so heavily
         // that the progress looked frozen (the reported "no live update").
         // The cache itself only needs to be durable when the run ends.
-        func publish(id: String, seconds: Double?, error: String?) {
+        func publish(id: String, seconds: Double?, error: String?, queued: Bool = false) {
             // The canonical cache was already mutated on MainActor. Publish only
             // this entry, not a copy of the full dictionary to every List leaf.
-            latencyState.publish(id: id)
+            if queued { latencyState.enqueue(id: id) }
+            else { latencyState.publish(id: id) }
             // [T-speedtest-live-update] Put ONLY the non-nil value in the payload.
             //
             // The previous version stored `seconds as Any` with `seconds: Double?`,
@@ -676,6 +711,7 @@ final class ChatOptimizer {
                     // skipped for this run. Count every skipped row, not 17/100
                     // forever, and leave its existing badge untouched.
                     if exhaustedAccounts.contains(entry.providerInstanceId) {
+                        latencyState.finishPending(id: entry.id)
                         complete(entry.providerInstanceId, skipped: true)
                         reportProgress()
                         continue
@@ -731,11 +767,13 @@ final class ChatOptimizer {
                     // Keep a known latency on account throttles. It is not a
                     // model defect, and must not erase a working model's badge.
                     latencyState.cache.errors.removeValue(forKey: id)
+                    var queuedForRetry = false
                     if !exhaustedAccounts.contains(providerId), !retried.contains(id),
                        let original = entries.first(where: { $0.id == id }) {
                         blockedUntil[providerId] = Date().addingTimeInterval(throttleCooldown)
                         retried.insert(id)
                         queue.append(original)
+                        queuedForRetry = true
                     } else {
                         exhaustedAccounts.insert(providerId)
                         blockedUntil.removeValue(forKey: providerId)
@@ -743,7 +781,7 @@ final class ChatOptimizer {
                         reportProgress()
                     }
                     logger.info("[latency] \(providerId.prefix(8)) throttled; \(queue.count) pending")
-                    publish(id: id, seconds: latencyState.cache.entries[id], error: nil)
+                    publish(id: id, seconds: latencyState.cache.entries[id], error: nil, queued: queuedForRetry)
                 } else {
                     // [T-speedtest-soft-fail] A failed speed test is NOT proof the
                     // model is unusable — transient network/auth blips would wrongly
@@ -771,6 +809,9 @@ final class ChatOptimizer {
             queue.removeAll()
             reportProgress()
         }
+        // Cancellation/retained permits may leave queued rows or a cancelled
+        // producer behind. No transient clock may survive its owning batch.
+        for entry in entries { latencyState.finishPending(id: entry.id) }
         // Persist once at the end: the cache only needs to be durable between
         // runs. Writing it per completion was a JSON encode + disk write on the
         // main actor for every probe — pure cost, no benefit.

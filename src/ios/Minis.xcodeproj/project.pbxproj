@@ -363,6 +363,7 @@
 		E5L200SS4 /* SessionsOffloadBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5L200SS3 /* SessionsOffloadBridge.swift */; };
 		E5LC00001 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = E5LC00002 /* Localizable.xcstrings */; };
 		E5LC00003 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = E5LC00002 /* Localizable.xcstrings */; };
+		E5ST00001 /* SpeedTest.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = E5ST00002 /* SpeedTest.xcstrings */; };
 		E5LD00001 /* ToolLoopDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5LD00003 /* ToolLoopDetector.swift */; };
 		E5LOCK001 /* SessionLockStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5LOCK101 /* SessionLockStore.swift */; };
 		E5LOCK002 /* FaceIDProtectionSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5LOCK102 /* FaceIDProtectionSettingsView.swift */; };
@@ -1201,6 +1202,7 @@
 		E5L200SS1 /* SessionsOffload.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SessionsOffload.m; sourceTree = "<group>"; };
 		E5L200SS3 /* SessionsOffloadBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsOffloadBridge.swift; sourceTree = "<group>"; };
 		E5LC00002 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
+		E5ST00002 /* SpeedTest.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = SpeedTest.xcstrings; sourceTree = "<group>"; };
 		E5LD00003 /* ToolLoopDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolLoopDetector.swift; sourceTree = "<group>"; };
 		E5LOCK101 /* SessionLockStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLockStore.swift; sourceTree = "<group>"; };
 		E5LOCK102 /* FaceIDProtectionSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaceIDProtectionSettingsView.swift; sourceTree = "<group>"; };
@@ -1725,6 +1727,7 @@
 				E5E000018 /* Minis.entitlements */,
 				E5PV00002 /* PrivacyInfo.xcprivacy */,
 				E5LC00002 /* Localizable.xcstrings */,
+				E5ST00002 /* SpeedTest.xcstrings */,
 				E5IP00010 /* InfoPlist.strings */,
 				E5AS00010 /* AppShortcuts.strings */,
 				E5A000011 /* default_mount */,
@@ -3043,6 +3046,7 @@
 				E51000003 /* Assets.xcassets in Resources */,
 				E5PV00001 /* PrivacyInfo.xcprivacy in Resources */,
 				E5LC00001 /* Localizable.xcstrings in Resources */,
+				E5ST00001 /* SpeedTest.xcstrings in Resources */,
 				E5IP00001 /* InfoPlist.strings in Resources */,
 				E5AS00001 /* AppShortcuts.strings in Resources */,
 				E5Q000002 /* cl100k_base.tiktoken in Resources */,

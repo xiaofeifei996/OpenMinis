@@ -1612,13 +1612,49 @@ struct UnifiedModelPicker: View {
         }
 
         var body: some View {
-            let seconds = state.result.seconds
-            let text = seconds.map { String(format: "%.1fs", $0) }
-            let failed = state.result.error != nil && seconds == nil
-            // Group/EmptyView is transparent to HStack layout. A concrete
-            // ZStack with a clear child reserves the SAME 48pt for every state.
+            // Only the running leaf has a timeline. Ticks neither publish state
+            // nor invalidate the List, other badges, or account/global controls.
+            // The concrete clear child reserves the SAME 48pt in every phase.
             ZStack(alignment: .trailing) {
                 Color.clear
+                if case .running = state.result.phase {
+                    TimelineView(.periodic(from: .now, by: 0.1)) { context in
+                        let elapsed = state.result.elapsed(at: context.date) ?? 0
+                        let text = String(format: "%.1fs", elapsed)
+                        HStack(spacing: 2) {
+                            Image(systemName: "hourglass").font(.system(size: 7))
+                            Text(text).monospacedDigit()
+                        }
+                        .font(.system(size: 9, weight: .medium))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                        .foregroundStyle(.blue)
+                        .padding(.horizontal, 3)
+                        .padding(.vertical, 1)
+                        .background(Color.blue.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(Text("Waiting for first token: \(text) elapsed", tableName: "SpeedTest"))
+                    }
+                } else if state.result.phase == .queued {
+                    Image(systemName: "clock")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 18)
+                        .accessibilityLabel(Text("Latency test queued", tableName: "SpeedTest"))
+                } else {
+                    finishedBadge
+                }
+            }
+            .frame(width: 48, height: 18, alignment: .trailing)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("latency-" + entryId)
+        }
+
+        private var finishedBadge: some View {
+            let text = state.result.seconds.map { String(format: "%.1fs", $0) }
+            let failed = state.result.error != nil && text == nil
+            return Group {
                 if let text {
                     Text(text)
                         .font(.system(size: 9, weight: .medium))
@@ -1630,18 +1666,18 @@ struct UnifiedModelPicker: View {
                         .padding(.vertical, 1)
                         .background(Color(UIColor.tertiarySystemFill))
                         .clipShape(RoundedRectangle(cornerRadius: 3))
+                        .accessibilityLabel(Text("First-token latency: \(text)", tableName: "SpeedTest"))
                 } else if failed {
-                    // 测速失败（软信号）：红✗标记，但模型仍可用。
+                    // A failed speed test remains a soft signal, not availability.
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.red)
                         .frame(width: 18)
+                        .accessibilityLabel(Text("Latency test failed", tableName: "SpeedTest"))
+                } else {
+                    Color.clear.accessibilityLabel(Text("Latency unmeasured", tableName: "SpeedTest"))
                 }
             }
-            .frame(width: 48, height: 18, alignment: .trailing)
-            .accessibilityElement(children: .ignore)
-            .accessibilityIdentifier("latency-" + entryId)
-            .accessibilityLabel(Text(text ?? (failed ? "Latency test failed" : "Latency unmeasured")))
         }
     }
 

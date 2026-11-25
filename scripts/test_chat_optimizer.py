@@ -65,7 +65,7 @@ CHECKS = [
      "UserDefaults.standard.data(forKey: ChatOptimizerSettings.latencyCacheKey)"),
     (OPT, "live results publish the changed entry only", "latencyState.publish(id: id)"),
     (OPT, "badges are backed by stable entry references", "final class ModelLatencyEntryState: ObservableObject"),
-    (OPT, "results publish while the run is in flight", "func publish(id: String, seconds: Double?, error: String?)"),
+    (OPT, "results publish while the run is in flight", "func publish(id: String, seconds: Double?, error: String?, queued: Bool = false)"),
     (OPT, "each completion publishes its own entry", "publish(id: id, seconds: lat, error: nil)"),
     (OPT, "a publish names the entries that changed", "latencyChangedIdsKey"),
     (OPT, "a publish carries the value itself", "latencySecondsKey"),

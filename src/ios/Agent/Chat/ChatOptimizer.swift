@@ -709,6 +709,8 @@ final class ChatOptimizer {
         var done = 0
         let globalLimit = min(6, max(1, concurrency))
         let accountLimit = min(2, globalLimit)
+        ModelLatencyDiagnostics.shared.record("scheduler-policy",
+            source: "global:\(globalLimit),account:\(accountLimit)", delayMs: perEntryTimeout * 1000)
         var completedByInstance: [String: Int] = [:]
         var totalsByInstance: [String: Int] = [:]
         var skippedByInstance: [String: Int] = [:]
@@ -748,6 +750,7 @@ final class ChatOptimizer {
                 entries.append(entry)
                 queue.append(entry)
                 latencyState.enqueue(id: entry.id)
+                ModelLatencyDiagnostics.shared.record("enqueue", id: entry.id, account: entry.providerInstanceId)
                 totalsByInstance[entry.providerInstanceId, default: 0] += 1
             }
             reportProgress()
@@ -893,11 +896,14 @@ final class ChatOptimizer {
                     if !exhaustedAccounts.contains(providerId), !retried.contains(id),
                        let original = entries.first(where: { $0.id == id }) {
                         blockedUntil[providerId] = Date().addingTimeInterval(throttleCooldown)
+                        ModelLatencyDiagnostics.shared.record("account-cooldown", account: providerId,
+                            delayMs: throttleCooldown * 1000)
                         retried.insert(id)
                         queue.append(original)
                         queuedForRetry = true
                     } else {
                         exhaustedAccounts.insert(providerId)
+                        ModelLatencyDiagnostics.shared.record("account-exhausted", account: providerId)
                         blockedUntil.removeValue(forKey: providerId)
                         complete(providerId, skipped: true)
                         reportProgress()

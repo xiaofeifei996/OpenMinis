@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import AVFoundation
 
 private let pickerLog = AppLogger(category: "UnifiedPicker")
@@ -309,13 +310,7 @@ struct UnifiedModelPicker: View {
         }
     }
 
-    private var diagnosticsExportButton: some View {
-        Button(action: exportSpeedTestDiagnostics) {
-            Label {
-                Text("Export speed-test diagnostics", tableName: "SpeedTest")
-            } icon: { Image(systemName: "square.and.arrow.up") }
-        }
-    }
+    // The export menu is a clear window overlay, not a native context menu.
     // Speed-test state is owned by ChatOptimizer for the process lifetime.
     // Only leaf views observe it: rebuilding this picker cannot disconnect a
     // callback from its badge object or reset the toolbar's in-flight state.
@@ -921,7 +916,7 @@ struct UnifiedModelPicker: View {
             // would auto-pick), and retries models that failed before.
             ToolbarItem(placement: .topBarLeading) {
                 // Only the toolbar leaf subscribes to shared run status.
-                SpeedTestButton {
+                SpeedTestButton(export: exportSpeedTestDiagnostics) {
                     Task { @MainActor in
                         await ChatOptimizer.shared.speedTestAll(
                             sessionId: config.currentSessionId?(),
@@ -929,7 +924,6 @@ struct UnifiedModelPicker: View {
                         )
                     }
                 }
-                .contextMenu { diagnosticsExportButton }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Done") { dismiss() }
@@ -1462,13 +1456,13 @@ struct UnifiedModelPicker: View {
                 if let target = Self.providerEditTarget(forSectionInstanceId: item.instance.id,
                                                         storedInstanceIds: store.instances.map(\.id)) {
                     if item.entries.contains(where: { $0.model.capabilities.supportedModalities.contains(.textOutput) }) {
-                        InstanceSpeedTestButton(instanceId: item.instance.id, label: item.instance.label) {
+                        InstanceSpeedTestButton(instanceId: item.instance.id, label: item.instance.label,
+                                                export: exportSpeedTestDiagnostics) {
                             Task {
                                 await ChatOptimizer.shared.speedTestInstance(
                                     instanceId: item.instance.id, sessionId: config.currentSessionId?())
                             }
                         }
-                        .contextMenu { diagnosticsExportButton }
                     }
                     // [T-picker-provider-edit] Edit sits LEFT of the chevron and is
                     // its own plain button, so a tap here never folds the section.
@@ -1725,10 +1719,12 @@ struct UnifiedModelPicker: View {
     @MainActor
     private struct SpeedTestButton: View {
         @ObservedObject private var status = ChatOptimizer.shared.speedTestStatus
+        let export: () -> Void
         let action: () -> Void
 
         var body: some View {
-            Button(action: action) {
+            SpeedTestPressControl(isDisabled: status.running && status.includesAllAccounts,
+                                  action: action, export: export) {
                 if status.running {
                     HStack(spacing: 4) {
                         ProgressView().controlSize(.small)
@@ -1743,9 +1739,7 @@ struct UnifiedModelPicker: View {
                     Image(systemName: "speedometer")
                 }
             }
-            // An automatic run can be upgraded to ALL accounts with one tap;
-            // subsequent taps cannot start a second run, even from another picker.
-            .disabled(status.running && status.includesAllAccounts)
+            // The control gates taps only; diagnostics stay available while running.
             .accessibilityLabel(Text("Speed-test all models"))
             .accessibilityIdentifier("speedtest-all")
         }
@@ -1758,11 +1752,13 @@ struct UnifiedModelPicker: View {
         @ObservedObject private var status = ChatOptimizer.shared.speedTestStatus
         let instanceId: String
         let label: String
+        let export: () -> Void
         let action: () -> Void
 
         var body: some View {
             let joined = status.running ? status.instances[instanceId] : nil
-            Button(action: action) {
+            let isDisabled = joined != nil && (status.includesAllAccounts || status.fullInstanceIds.contains(instanceId))
+            SpeedTestPressControl(isDisabled: isDisabled, action: action, export: export) {
                 HStack(spacing: 3) {
                     if let joined {
                         if joined.done < joined.total || joined.total == 0 {
@@ -1786,9 +1782,7 @@ struct UnifiedModelPicker: View {
             .foregroundStyle(.tint)
             .textCase(nil)
             .fixedSize()
-            // Automatic available-only coverage can be upgraded once to this
-            // API's full catalog; only an explicit full scope locks the button.
-            .disabled(joined != nil && (status.includesAllAccounts || status.fullInstanceIds.contains(instanceId)))
+            // Only taps are gated. Long-press export must work mid-run too.
             .accessibilityLabel(Text("Speed-test all models in \(label)"))
             .accessibilityIdentifier("speedtest-api-" + instanceId)
         }
@@ -1957,5 +1951,179 @@ struct UnifiedModelPicker: View {
             ids.insert(item.instance.id)
         }
         collapsedInstanceIds = ids
+    }
+}
+
+// MARK: - Clear speed-test diagnostics menu (iOS 16+)
+
+/// The label is not a SwiftUI Button: there is exactly one tap recognizer, and
+/// it must lose to long-press. A successful hold can never start a speed test.
+private struct SpeedTestPressControl<Label: View>: View {
+    let isDisabled: Bool
+    let action: () -> Void
+    let export: () -> Void
+    @ViewBuilder let label: () -> Label
+
+    var body: some View {
+        label()
+            .frame(minWidth: 44, minHeight: 44)
+            .opacity(isDisabled ? 0.45 : 1)
+            .overlay {
+                SpeedTestPressSurface(isDisabled: isDisabled, action: action, export: export)
+                    .accessibilityHidden(true)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { if !isDisabled { action() } }
+            .accessibilityAction(named: Text("Export speed-test diagnostics", tableName: "SpeedTest"), export)
+    }
+}
+
+private struct SpeedTestPressSurface: UIViewRepresentable {
+    let isDisabled: Bool
+    let action: () -> Void
+    let export: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        let hold = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.hold(_:)))
+        hold.minimumPressDuration = 0.5
+        hold.allowableMovement = 10 // scrolling fails the hold instead of opening a menu
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tap(_:)))
+        tap.require(toFail: hold)
+        view.addGestureRecognizer(hold)
+        view.addGestureRecognizer(tap)
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) { context.coordinator.parent = self }
+
+    static func dismantleUIView(_ view: UIView, coordinator: Coordinator) { coordinator.menu?.dismiss() }
+
+    @MainActor final class Coordinator: NSObject {
+        var parent: SpeedTestPressSurface
+        weak var menu: SpeedTestDiagnosticsMenu?
+        init(_ parent: SpeedTestPressSurface) { self.parent = parent }
+        @objc func tap(_ gesture: UITapGestureRecognizer) {
+            guard gesture.state == .ended, !parent.isDisabled else { return }
+            parent.action()
+        }
+        @objc func hold(_ gesture: UILongPressGestureRecognizer) {
+            guard gesture.state == .began, let anchor = gesture.view, let window = anchor.window else { return }
+            menu = SpeedTestDiagnosticsMenu.show(in: window, anchor: anchor, export: parent.export)
+        }
+    }
+}
+
+/// Pure geometry shared by the UIKit overlay and the native Swift regression.
+private enum SpeedTestMenuLayout {
+    static func frame(anchor: CGRect, available: CGRect, size: CGSize) -> CGRect {
+        let width = min(size.width, available.width)
+        let height = min(size.height, available.height)
+        let below = anchor.maxY + 8
+        let preferredY = below + height <= available.maxY ? below : anchor.minY - 8 - height
+        return CGRect(x: max(available.minX, min(anchor.midX - width / 2, available.maxX - width)),
+                      y: max(available.minY, min(preferredY, available.maxY - height)),
+                      width: width, height: height)
+    }
+}
+
+/// No presentation controller, material, dimming layer or snapshot: the actual
+/// page remains untouched underneath this transparent window child. Only the
+/// opaque menu card draws pixels. Adding it to the source window also covers
+/// navigation/toolbars without relying on List preference propagation.
+@MainActor private final class SpeedTestDiagnosticsMenu: UIView {
+    private static weak var active: SpeedTestDiagnosticsMenu?
+    private weak var anchor: UIView?
+    private let card = UIButton(type: .system)
+    private let export: () -> Void
+
+    static func show(in window: UIWindow, anchor: UIView, export: @escaping () -> Void) -> SpeedTestDiagnosticsMenu {
+        active?.dismiss()
+        let menu = SpeedTestDiagnosticsMenu(anchor: anchor, export: export)
+        menu.frame = window.bounds
+        menu.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        window.addSubview(menu)
+        active = menu
+        menu.setNeedsLayout()
+        menu.layoutIfNeeded()
+        UIAccessibility.post(notification: .screenChanged, argument: menu.card)
+        return menu
+    }
+
+    private init(anchor: UIView, export: @escaping () -> Void) {
+        self.anchor = anchor
+        self.export = export
+        super.init(frame: .zero)
+        backgroundColor = .clear
+        accessibilityViewIsModal = true
+        accessibilityIdentifier = "speedtest-diagnostics-menu"
+
+        let outside = UIControl()
+        outside.backgroundColor = .clear
+        outside.frame = bounds
+        outside.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        outside.isAccessibilityElement = false
+        outside.addTarget(self, action: #selector(close), for: .touchUpInside)
+        // A drag outside closes the overlay too; the next drag scrolls normally.
+        outside.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(outsidePan(_:))))
+        addSubview(outside)
+
+        var config = UIButton.Configuration.plain()
+        config.title = String(localized: "Export speed-test diagnostics", table: "SpeedTest")
+        config.image = UIImage(systemName: "square.and.arrow.up")
+        config.imagePadding = 12
+        config.contentInsets = NSDirectionalEdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16)
+        config.titleLineBreakMode = .byWordWrapping
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var attributes = attributes
+            attributes.font = UIFont.preferredFont(forTextStyle: .body)
+            return attributes
+        }
+        card.configuration = config
+        card.titleLabel?.adjustsFontForContentSizeCategory = true
+        card.backgroundColor = .systemBackground // opaque in light and dark modes
+        card.layer.cornerRadius = 14
+        card.layer.shadowColor = UIColor.black.cgColor
+        card.layer.shadowOpacity = 0.18
+        card.layer.shadowRadius = 12
+        card.layer.shadowOffset = CGSize(width: 0, height: 4)
+        card.accessibilityIdentifier = "speedtest-export-diagnostics"
+        card.addTarget(self, action: #selector(exportTapped), for: .touchUpInside)
+        addSubview(card)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard let anchor, anchor.window === window else { dismiss(); return }
+        let source = anchor.convert(anchor.bounds, to: self)
+        guard bounds.intersects(source) else { dismiss(); return }
+        let available = bounds.inset(by: safeAreaInsets).insetBy(dx: 12, dy: 12)
+        guard available.width > 0, available.height > 0 else { dismiss(); return }
+        let size = card.sizeThatFits(CGSize(width: min(320, available.width), height: available.height))
+        card.frame = SpeedTestMenuLayout.frame(anchor: source, available: available,
+            size: CGSize(width: min(320, available.width), height: max(52, size.height)))
+        card.layer.shadowPath = UIBezierPath(roundedRect: card.bounds, cornerRadius: 14).cgPath
+    }
+
+    @objc private func close() { dismiss() }
+    @objc private func outsidePan(_ gesture: UIPanGestureRecognizer) {
+        if gesture.state == .began { dismiss() }
+    }
+    @objc private func exportTapped() {
+        dismiss()
+        export()
+    }
+    override func accessibilityPerformEscape() -> Bool { dismiss(); return true }
+    func dismiss() {
+        guard superview != nil else { return }
+        removeFromSuperview()
+        if Self.active === self { Self.active = nil }
+        UIAccessibility.post(notification: .layoutChanged, argument: nil)
     }
 }

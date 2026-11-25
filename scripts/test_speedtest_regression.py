@@ -34,6 +34,10 @@ checks = {
         and 'events.count >= 6000' in source,
     'diagnostics are exportable without per-completion disk writes':
         'exportSpeedTestDiagnostics()' in picker and 'ModelLatencyDiagnostics.encode(snapshot)' in picker,
+    'diagnostics distinguish queue waits, probe timeout policy and account cooldown':
+        all('"' + event + '"' in source for event in
+            ['scheduler-policy', 'enqueue', 'account-cooldown', 'account-exhausted'])
+        and 'delayMs: throttleCooldown * 1000' in source,
     'default bounded parallelism and per-account cap':
         'concurrency: Int = 4' in source and 'let accountLimit = min(2, globalLimit)' in source,
     'task-group scheduler helpers explicitly retain main-actor isolation':
@@ -72,7 +76,7 @@ checks = {
         'InstanceSpeedTestButton(instanceId: item.instance.id' in picker
         and 'ChatOptimizer.shared.speedTestInstance(' in picker,
     'partial automatic API scope stays upgradeable; explicit full scope locks before suspension':
-        '.disabled(joined != nil && (status.includesAllAccounts || status.fullInstanceIds.contains(instanceId)))' in picker
+        'let isDisabled = joined != nil && (status.includesAllAccounts || status.fullInstanceIds.contains(instanceId))' in picker
         and '@Published var fullInstanceIds: Set<String> = []' in source
         and 'speedTestStatus.fullInstanceIds = []' in source
         and source.index('speedTestStatus.fullInstanceIds.insert(instanceId)')
@@ -153,7 +157,7 @@ production_harness = program
 # Evaluate the exact production button predicate in Swift alongside the real
 # scheduler, so this regression fails if partial coverage disables the UI again.
 instance_button = picker[picker.index('    private struct InstanceSpeedTestButton: View'):]
-button_disabled = instance_button.split('.disabled(', 1)[1].split('\n', 1)[0][:-1]
+button_disabled = instance_button.split('let isDisabled = ', 1)[1].split('\n', 1)[0]
 program += '''
 @MainActor func apiButtonDisabled(_ optimizer: ChatOptimizer, _ instanceId: String) -> Bool {
     let status = optimizer.speedTestStatus

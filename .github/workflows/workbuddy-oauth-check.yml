@@ -101,6 +101,9 @@ jobs:
         run: |
           python3 scripts/test_chat_optimizer.py
 
+      - name: Test clear speed-test menu and UIKit simulator background
+        run: python3 scripts/test_speedtest_menu.py
+
       - name: Upload SwiftUI rendering evidence
         if: always()
         uses: actions/upload-artifact@v4

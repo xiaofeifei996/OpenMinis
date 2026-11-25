@@ -505,14 +505,17 @@ final class ChatOptimizer {
                     progress?(done, entries.count)
                     publish(id: id, seconds: nil, error: probe.error)
                 }
+                // [T-speedtest-frame-gap] Let the main run loop render the row
+                // before dispatching the next serial probe. `Task.yield()` only
+                // hands execution to another Swift task; the same MainActor task
+                // can immediately resume before SwiftUI gets a display frame,
+                // so rapid responses were still coalesced into one late update.
+                // A short suspension gives Combine/SwiftUI a real opportunity to
+                // apply this entry's badge while the next model is still queued.
+                if concurrency == 1, (!queue.isEmpty || inFlight > 0) {
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
                 pump()
-                // [T-speedtest-live-update] Yield to the main actor between
-                // probes: the whole run is @MainActor-isolated (provider setup
-                // and stream parsing included), so without this the next probe
-                // starts before SwiftUI gets a chance to draw the row we just
-                // published — which is exactly what "not in real time" looked
-                // like. One yield per completion is free.
-                await Task.yield()
             }
         }
 

@@ -106,6 +106,8 @@ def main() -> int:
         ("a throttled row is retried once", "queue.append(original)"),
         ("stale throttle errors are cleared before deciding", "cleared \\(staleThrottle.count) stale throttle error"),
         ("manual test runs serially so results appear one by one", "concurrency: 1,"),
+        ("serial test gives SwiftUI a display interval", "Task.sleep(nanoseconds: 50_000_000)"),
+        ("next probe starts only after the render interval", "await Task.sleep(nanoseconds: 50_000_000)\n                }\n                pump()"),
     ]
     for name, needle in checks:
         found = needle in throttle or needle in PICKER.read_text()

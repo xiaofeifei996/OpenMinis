@@ -32,9 +32,9 @@ CHECKS = [
      "AIChatViewModel.makeAgentProvider("),
     (OPT, "agent-path probe drives the agent stream", "streamAgentMessageClamped("),
     (OPT, "probe returns on the FIRST token", "case .text(let t) = chunk, !t.isEmpty"),
-    (OPT, "failed probe records an error", "updated.errors[id] = probe.error"),
+    (OPT, "failed probe records an error", "latencyState.cache.errors[id] = probe.error"),
     (OPT, "speed-test failure never hard-excludes a model",
-     "updated.unavailable.removeAll { $0 == id }"),
+     "latencyState.cache.unavailable.removeAll { $0 == id }"),
     (OPT, "fastest entry is picked from measured latencies", "func fastestEntry()"),
     (OPT, "auto-pick honours a user-pinned model", "isManuallyPinned(for: sessionId)"),
     (OPT, "auto-switch defaults ON when unset",
@@ -63,14 +63,15 @@ CHECKS = [
      "entry.isUnavailableFromProvider"),
     (OPT, "cache is loaded once at optimizer initialization",
      "UserDefaults.standard.data(forKey: ChatOptimizerSettings.latencyCacheKey)"),
-    (OPT, "live results update the in-memory snapshot", "latencyState.cache = updated"),
-    (OPT, "badges are backed by a stable reference", "final class ModelLatencyState: ObservableObject"),
+    (OPT, "live results publish the changed entry only", "latencyState.publish(id: id)"),
+    (OPT, "badges are backed by stable entry references", "final class ModelLatencyEntryState: ObservableObject"),
     (OPT, "results publish while the run is in flight", "func publish(id: String, seconds: Double?, error: String?)"),
     (OPT, "each completion publishes its own entry", "publish(id: id, seconds: lat, error: nil)"),
     (OPT, "a publish names the entries that changed", "latencyChangedIdsKey"),
     (OPT, "a publish carries the value itself", "latencySecondsKey"),
     (OPT, "the cache is not rewritten per probe", "Persist once at the end"),
-    (PICKER, "badge leaves observe the shared snapshot", "@ObservedObject private var store = ChatOptimizer.shared.latencyState"),
+    (PICKER, "badge leaves observe only their entry", "@ObservedObject private var state: ModelLatencyEntryState"),
+    (PICKER, "API header has a scope-specific speed button", "InstanceSpeedTestButton(instanceId: item.instance.id"),
     (PICKER, "each row has a concrete badge cell", "LatencyBadgeCell(entryId: entry.id)"),
     (PICKER, "the list body reads no speed-test state", "List {\n            if let note = config.headerNote"),
     (OPT, "optimizer owns the stable snapshot", "let latencyState: ModelLatencyState"),
@@ -102,7 +103,7 @@ def main() -> int:
         ("throttle is recognised", "private static func isThrottle"),
         ("throttle is scoped to one provider", "blockedUntil[providerId]"),
         ("a throttled provider is backed off, not the run", "throttleCooldown"),
-        ("throttle leaves no error on the entry", "updated.errors.removeValue(forKey: id)"),
+        ("throttle leaves no error on the entry", "latencyState.cache.errors.removeValue(forKey: id)"),
         ("other providers keep going", "return now >= until"),
         ("a throttled row is retried once", "queue.append(original)"),
         ("stale throttle errors are cleared before deciding", "cleared \\(staleThrottle.count) stale throttle error"),
@@ -166,7 +167,7 @@ def main() -> int:
     ok &= not bad
 
     opt = OPT.read_text()
-    softened = "updated.unavailable.append" not in opt and "unavailable[id]" not in opt
+    softened = "latencyState.cache.unavailable.append" not in opt and "unavailable[id]" not in opt
     print(("PASS" if softened else "FAIL") + ": no speed-test path hard-excludes a model")
     ok &= softened
 

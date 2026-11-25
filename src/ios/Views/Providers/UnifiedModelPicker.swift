@@ -1420,6 +1420,14 @@ struct UnifiedModelPicker: View {
                 Spacer(minLength: 8)
                 if let target = Self.providerEditTarget(forSectionInstanceId: item.instance.id,
                                                         storedInstanceIds: store.instances.map(\.id)) {
+                    if item.entries.contains(where: { $0.model.capabilities.supportedModalities.contains(.textOutput) }) {
+                        InstanceSpeedTestButton(instanceId: item.instance.id, label: item.instance.label) {
+                            Task {
+                                await ChatOptimizer.shared.speedTestInstance(
+                                    instanceId: item.instance.id, sessionId: config.currentSessionId?())
+                            }
+                        }
+                    }
                     // [T-picker-provider-edit] Edit sits LEFT of the chevron and is
                     // its own plain button, so a tap here never folds the section.
                     // [T-picker-provider-edit-text] Styled exactly like the Model
@@ -1549,6 +1557,7 @@ struct UnifiedModelPicker: View {
                 // One concrete fixed-width slot, including the unmeasured case.
                 // minWidth on an empty Group did not reserve a layout child.
                 LatencyBadgeCell(entryId: entry.id)
+                    .id(entry.id) // stable leaf identity across List row reuse
         }
         .opacity(disabled ? 0.6 : 1)
         .contentShape(Rectangle())
@@ -1587,16 +1596,21 @@ struct UnifiedModelPicker: View {
         }
     }
 
-    /// One row's latency badge — a leaf that observes the shared store.
+    /// A List leaf observes ONLY its stable entry object, never the full cache.
     @MainActor
     private struct LatencyBadgeCell: View {
-        @ObservedObject private var store = ChatOptimizer.shared.latencyState
+        @ObservedObject private var state: ModelLatencyEntryState
         let entryId: String
 
+        init(entryId: String, optimizer: ChatOptimizer = .shared) {
+            self.entryId = entryId
+            _state = ObservedObject(wrappedValue: optimizer.latencyState.entry(id: entryId))
+        }
+
         var body: some View {
-            let seconds = store.cache.entries[entryId]
+            let seconds = state.result.seconds
             let text = seconds.map { String(format: "%.1fs", $0) }
-            let failed = store.cache.errors[entryId] != nil && seconds == nil
+            let failed = state.result.error != nil && seconds == nil
             // Group/EmptyView is transparent to HStack layout. A concrete
             // ZStack with a clear child reserves the SAME 48pt for every state.
             ZStack(alignment: .trailing) {
@@ -1621,7 +1635,9 @@ struct UnifiedModelPicker: View {
                 }
             }
             .frame(width: 48, height: 18, alignment: .trailing)
-            .accessibilityElement(children: .combine)
+            .accessibilityElement(children: .ignore)
+            .accessibilityIdentifier("latency-" + entryId)
+            .accessibilityLabel(Text(text ?? (failed ? "Latency test failed" : "Latency unmeasured")))
         }
     }
 
@@ -1651,6 +1667,46 @@ struct UnifiedModelPicker: View {
             // subsequent taps cannot start a second run, even from another picker.
             .disabled(status.running && status.includesAllAccounts)
             .accessibilityLabel(Text("Speed-test all models"))
+        }
+    }
+
+    /// Per-API header control. A completed scope remains disabled until the
+    /// shared batch ends, so a second tap cannot re-probe it inside that batch.
+    @MainActor
+    private struct InstanceSpeedTestButton: View {
+        @ObservedObject private var status = ChatOptimizer.shared.speedTestStatus
+        let instanceId: String
+        let label: String
+        let action: () -> Void
+
+        var body: some View {
+            let joined = status.running ? status.instances[instanceId] : nil
+            Button(action: action) {
+                HStack(spacing: 3) {
+                    if let joined {
+                        if joined.done < joined.total || joined.total == 0 {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Image(systemName: "checkmark")
+                        }
+                        Text("\(joined.done)/\(joined.total)")
+                            .monospacedDigit()
+                        if joined.skipped > 0 {
+                            Text("\(joined.skipped) skipped")
+                        }
+                    } else {
+                        Image(systemName: "speedometer")
+                    }
+                }
+                .font(.caption)
+                .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.tint)
+            .textCase(nil)
+            .fixedSize()
+            .disabled(joined != nil)
+            .accessibilityLabel(Text("Speed-test all models in \(label)"))
         }
     }
 

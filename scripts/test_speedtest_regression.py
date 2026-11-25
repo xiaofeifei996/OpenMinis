@@ -28,8 +28,8 @@ checks = {
         'withTaskGroup(of: (String, String, LatencyProbe).self) { @MainActor group in' in source
         and '@MainActor func nextReady()' in source and '@MainActor func pump()' in source,
     'no serial rendering sleep': '50_000_000' not in source and 'concurrency: 1,' not in picker,
-    'single process-wide run with manual queue upgrade':
-        'speedTestWaiters.append($0)' in source and 'includeAllAccountsRequested || includeAllAccounts' in source,
+    'single process-wide run with explicit scoped queue merge':
+        'speedTestWaiters.append($0)' in source and 'requestedInstanceIds.contains($0.providerInstanceId)' in source,
     'real deadline spans the probe, not a structured task-group join':
         'race.timer = Task' in source and 'race.request = Task' in source
         and 'timeout: perEntryTimeout' in source
@@ -40,9 +40,11 @@ checks = {
     'late results have a single winner': 'guard !finished else { return }' in source,
     'throttles bypass agent retry': 'if Self.isThrottle(failure) { return failure }' in source,
     'hard failures invalidate stale latency but stay soft':
-        'updated.entries.removeValue(forKey: id)' in source and 'updated.unavailable.append' not in source,
-    'badge leaf directly observes optimizer-owned memory':
-        '@ObservedObject private var store = ChatOptimizer.shared.latencyState' in picker,
+        'latencyState.cache.entries.removeValue(forKey: id)' in source and 'latencyState.cache.unavailable.append' not in source,
+    'badge leaf observes a stable per-entry publisher':
+        '@ObservedObject private var state: ModelLatencyEntryState' in picker
+        and 'optimizer.latencyState.entry(id: entryId)' in picker
+        and '@Published var cache' not in source,
     'no local reference-state or disk adoption bridge':
         '@State private var badges' not in picker and 'currentLatencyBadges' not in picker,
     'empty badge is a real fixed-width layout child':
@@ -52,8 +54,12 @@ checks = {
         '.frame(width: 32, height: 32) // keep the control column' in picker,
     'background cleanup cannot overwrite an active snapshot':
         'guard !speedTestStatus.running else { return }' in source,
-    'skipped rows finish progress without invented model errors':
-        'speedTestStatus.skipped += queue.count' in source and 'done += queue.count' in source,
+    'skipped rows finish per-instance progress without invented model errors':
+        'for entry in queue { complete(entry.providerInstanceId, skipped: true) }' in source,
+    'header button invokes scoped entry point, not global':
+        'InstanceSpeedTestButton(instanceId: item.instance.id' in picker
+        and 'ChatOptimizer.shared.speedTestInstance(' in picker
+        and '.disabled(joined != nil)' in picker,
 }
 for name, passed in checks.items():
     print(('PASS' if passed else 'FAIL') + ': ' + name, flush=True)
@@ -72,7 +78,7 @@ types = section('struct ModelLatencyCache:', '/// Errors surfaced by `ChatOptimi
 fields = section('    let latencyState: ModelLatencyState', '    private init()')
 cache = section('    private func readLatencyCache()', '    /// All entries that are usable:')
 probe = section('    func measureLatency(', '    private func performLatencyProbe(')
-scheduler = section('    func speedTestAll(', '    /// Compatibility signal')
+scheduler = section('    func speedTestInstance(', '    /// Compatibility signal')
 notifications = section('    static let latencyUpdatedNotification', '    /// Whether a probe failure means')
 throttle = section('    private static func isThrottle(', '    /// The fastest available entry per the latency cache')
 
@@ -126,6 +132,7 @@ struct TestLog { func info(_ text: String) {} }
         return LatencyProbe(seconds: 0.3, error: nil)
     }
 ''' + cache + probe + scheduler + notifications + throttle + '\n}\n'
+production_harness = program
 program += r'''
 func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
     (0..<count).map { ModelEntry(id: "m\($0)", providerInstanceId: "a\($0 % accounts)") }
@@ -139,8 +146,12 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         parallel.automatic = parallel.catalog
         var sawLive = false
         var progress: [(Int, Int)] = []
-        let subscription = parallel.latencyState.$cache.sink { cache in
-            if !cache.entries.isEmpty && cache.entries.count < 100 && parallel.speedTestStatus.running {
+        let firstLeaf = parallel.latencyState.entry(id: "m0")
+        let unrelatedLeaf = parallel.latencyState.entry(id: "not-tested")
+        var unrelatedPublishes = 0
+        let unrelatedSubscription = unrelatedLeaf.$result.dropFirst().sink { _ in unrelatedPublishes += 1 }
+        let subscription = firstLeaf.$result.sink { result in
+            if result.seconds != nil && parallel.latencyState.cache.entries.count < 100 && parallel.speedTestStatus.running {
                 sawLive = true
             }
         }
@@ -154,8 +165,63 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         let durable = try JSONDecoder().decode(ModelLatencyCache.self,
             from: parallel.userDefaults.data(forKey: ChatOptimizerSettings.latencyCacheKey)!)
         assert(durable.entries == parallel.latencyState.cache.entries)
-        withExtendedLifetime(subscription) {}
-        print("PASS: 100 actual Swift probes, bounded parallelism, deduplication, live snapshots, durable final cache")
+        assert(parallel.latencyState.entry(id: "m0") === firstLeaf && unrelatedPublishes == 0)
+        withExtendedLifetime((subscription, unrelatedSubscription)) {}
+        print("PASS: 100 actual Swift probes, stable per-entry publishers, no unrelated invalidation, durable final cache")
+
+        // A single API must not fall back to availableEntries or all accounts.
+        let scoped = ChatOptimizer()
+        scoped.catalog = entries(12, accounts: 3)
+        scoped.automatic = scoped.catalog
+        await scoped.speedTestInstance(instanceId: "a1", sessionId: nil)
+        assert(Set(scoped.starts.keys) == Set(scoped.catalog.filter { $0.providerInstanceId == "a1" }.map(\.id)))
+        assert(scoped.speedTestStatus.instances["a1"]?.done == 4)
+        assert(scoped.speedTestStatus.instances["a1"]?.total == 4)
+        assert(scoped.speedTestStatus.instances["a0"] == nil)
+        await scoped.speedTestInstance(instanceId: "unknown", sessionId: nil)
+        assert(scoped.starts.count == 4 && !scoped.speedTestStatus.running)
+        print("PASS: API-only request includes exactly its catalog entries; empty API never expands scope")
+
+        // Two API requests plus duplicate taps merge without probing a third API.
+        let apiMerge = ChatOptimizer()
+        apiMerge.catalog = entries(18, accounts: 3)
+        apiMerge.automatic = apiMerge.catalog
+        apiMerge.holdRequests = true
+        let apiA = Task { @MainActor in await apiMerge.speedTestInstance(instanceId: "a0", sessionId: nil) }
+        for _ in 0..<20 { await Task.yield() }
+        let apiB = Task { @MainActor in await apiMerge.speedTestInstance(instanceId: "a1", sessionId: nil) }
+        let apiDuplicate = Task { @MainActor in await apiMerge.speedTestInstance(instanceId: "a0", sessionId: nil) }
+        for _ in 0..<20 { await Task.yield() }
+        assert(apiMerge.speedTestStatus.instances["a1"] != nil)
+        apiMerge.holdRequests = false
+        apiMerge.releaseHeld()
+        await apiA.value
+        await apiB.value
+        await apiDuplicate.value
+        assert(apiMerge.starts.count == 12 && apiMerge.starts.values.allSatisfy { $0 == 1 })
+        assert(apiMerge.launchAccounts.allSatisfy { $0 == "a0" || $0 == "a1" })
+        assert(apiMerge.speedTestStatus.instances["a0"]?.done == 6)
+        assert(apiMerge.speedTestStatus.instances["a1"]?.done == 6)
+        assert(apiMerge.maxAccount <= 2 && apiMerge.maxActive <= 4)
+        print("PASS: API/API merging, independent progress, duplicate taps, no third-API traffic")
+
+        // A global request can upgrade an API run; an API request can join it.
+        let apiGlobal = ChatOptimizer()
+        apiGlobal.catalog = entries(12, accounts: 3)
+        apiGlobal.holdRequests = true
+        let firstAPI = Task { @MainActor in await apiGlobal.speedTestInstance(instanceId: "a0", sessionId: nil) }
+        for _ in 0..<20 { await Task.yield() }
+        let allAPI = Task { @MainActor in await apiGlobal.speedTestAll(sessionId: nil, includeAllAccounts: true) }
+        let joiningAPI = Task { @MainActor in await apiGlobal.speedTestInstance(instanceId: "a2", sessionId: nil) }
+        for _ in 0..<20 { await Task.yield() }
+        apiGlobal.holdRequests = false
+        apiGlobal.releaseHeld()
+        await firstAPI.value
+        await allAPI.value
+        await joiningAPI.value
+        assert(apiGlobal.starts.count == 12 && apiGlobal.starts.values.allSatisfy { $0 == 1 })
+        assert(apiGlobal.speedTestStatus.instances.values.allSatisfy { $0.done == $0.total && $0.total == 4 })
+        print("PASS: API/global upgrade and global/API join share one queue without duplicate probes")
 
         // A SINGLE account never consumes more than two request slots.
         let single = ChatOptimizer()
@@ -188,9 +254,9 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         assert(totals.last!.0 == 8 && totals.last!.1 == 8)
         assert(!joined.speedTestStatus.running && joined.maxActive <= 4)
         // A newly attached/reopened leaf gets the whole CURRENT snapshot at once.
-        var reopened = 0
-        let reopenedLeaf = joined.latencyState.$cache.sink { reopened = $0.entries.count }
-        assert(reopened == 8)
+        var reopened: Double?
+        let reopenedLeaf = joined.latencyState.entry(id: "m0").$result.sink { reopened = $0.seconds }
+        assert(reopened == 0.3)
         withExtendedLifetime(reopenedLeaf) {}
         print("PASS: automatic/manual upgrade, cross-picker reentry, reopened leaf replay")
 
@@ -298,3 +364,5 @@ with tempfile.TemporaryDirectory(prefix='speedtest-regression-') as tmp:
     subprocess.run(['swiftc', '-swift-version', '5', '-parse-as-library', str(swift), '-o', str(binary)],
                    check=True, timeout=90)
     subprocess.run([str(binary)], check=True, timeout=45)
+    from speedtest_swiftui_host import run_swiftui_test
+    run_swiftui_test(production_harness, picker, Path(tmp))

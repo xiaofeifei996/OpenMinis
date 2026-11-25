@@ -1,8 +1,9 @@
 """Host the production badge inside a REAL SwiftUI List on macOS CI.
 
 Only UIKit's background color is substituted for its AppKit equivalent. The
-ObservedObject initializer, result reads, identity and accessibility are the
+ObservedObject initializer, result reads, identity and badge body are the
 production code, not a snapshot subscriber or a simulated render callback.
+Vision checks a bitmap drawn by the mounted List, without accessibility permission.
 This exercises SwiftUI mounting/invalidation, NOT iOS device pixels/scrolling.
 """
 import subprocess
@@ -15,7 +16,7 @@ def run_swiftui_test(harness, picker, tmp):
     badge = badge.replace('UIColor.tertiarySystemFill', 'NSColor.controlBackgroundColor')
     harness = harness.replace('@MainActor final class ChatOptimizer {',
                               '@MainActor final class ChatOptimizer {\n    static let shared = ChatOptimizer()')
-    program = 'import AppKit\nimport SwiftUI\n' + harness + badge + r'''
+    program = 'import AppKit\nimport SwiftUI\nimport Vision\n' + harness + badge + r'''
 @MainActor struct MountedPicker: View {
     let optimizer: ChatOptimizer
     let ids: [String]
@@ -32,26 +33,38 @@ def run_swiftui_test(harness, picker, tmp):
     }
 }
 
-// Query the hosting window's real accessibility tree, not the source model.
-// Objective-C selectors also reach SwiftUI's private accessibility proxy nodes.
-@MainActor func attribute(_ object: NSObject, _ name: String) -> Any? {
-    let selector = NSSelectorFromString(name)
-    guard object.responds(to: selector) else { return nil }
-    return object.perform(selector)?.takeUnretainedValue()
-}
-@MainActor func labels(_ object: Any, depth: Int = 0) -> [String: String] {
-    guard depth < 40, let object = object as? NSObject else { return [:] }
-    var result: [String: String] = [:]
-    if let id = attribute(object, "accessibilityIdentifier") as? String,
-       let label = attribute(object, "accessibilityLabel") as? String {
-        result[id] = label
-    }
-    if let children = attribute(object, "accessibilityChildren") as? [Any] {
-        for child in children {
-            result.merge(labels(child, depth: depth + 1)) { _, new in new }
+// CI does not enable the process-wide accessibility tree. Inspect pixels from
+// the actual mounted NSHostingView instead, with Vision text recognition.
+@MainActor func rendered(_ window: NSWindow) throws -> (String, Int, NSBitmapImageRep) {
+    let host = window.contentView!
+    host.layoutSubtreeIfNeeded()
+    window.displayIfNeeded()
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1500, pixelsHigh: 720,
+        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 32)!
+    rep.size = host.bounds.size
+    host.cacheDisplay(in: host.bounds, to: rep)
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    request.usesLanguageCorrection = false
+    request.minimumTextHeight = 0
+    try VNImageRequestHandler(cgImage: rep.cgImage!, options: [:]).perform([request])
+    let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        .joined(separator: " ").lowercased().filter { !$0.isWhitespace }
+    let data = rep.bitmapData!
+    var red = 0
+    for y in stride(from: 0, to: rep.pixelsHigh, by: 2) {
+        for x in stride(from: rep.pixelsWide - 300, to: rep.pixelsWide, by: 2) {
+            let offset = y * rep.bytesPerRow + x * 4
+            if data[offset] > 160 && data[offset + 1] < 150 && data[offset + 2] < 150 { red += 1 }
         }
     }
-    return result
+    return (text, red, rep)
+}
+@MainActor func save(_ rep: NSBitmapImageRep, name: String) throws {
+    let directory = URL(fileURLWithPath: "build/speedtest-ui", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try rep.representation(using: .png, properties: [:])!.write(to: directory.appendingPathComponent(name + ".png"))
 }
 @MainActor func mount(_ optimizer: ChatOptimizer, ids: [String]) -> NSWindow {
     let host = NSHostingView(rootView: MountedPicker(optimizer: optimizer, ids: ids))
@@ -63,14 +76,19 @@ def run_swiftui_test(harness, picker, tmp):
     host.layoutSubtreeIfNeeded()
     return window
 }
-@MainActor func expect(_ window: NSWindow, id: String, label: String) async throws {
-    for _ in 0..<150 {
-        window.contentView?.layoutSubtreeIfNeeded()
-        window.displayIfNeeded()
-        if labels(window)["latency-" + id] == label { return }
-        try await Task.sleep(nanoseconds: 20_000_000)
+@MainActor func expect(_ window: NSWindow, latency: Bool, failed: Bool = false, name: String) async throws {
+    var last = ""
+    for _ in 0..<60 {
+        let (text, red, rep) = try rendered(window)
+        last = "OCR=\(text), red=\(red)"
+        if text.contains("fast"), text.contains("0.3s") == latency, (red > 3) == failed {
+            try save(rep, name: name)
+            return
+        }
+        try save(rep, name: "last-failure")
+        try await Task.sleep(nanoseconds: 50_000_000)
     }
-    fatalError("SwiftUI List did not render \(id)=\(label); actual accessibility tree: \(labels(window))")
+    fatalError("SwiftUI List did not render latency=\(latency), failed=\(failed): \(last)")
 }
 @main struct SwiftUIRegression {
     @MainActor static func main() async throws {
@@ -83,9 +101,9 @@ def run_swiftui_test(harness, picker, tmp):
         optimizer.holdRequests = true
         let leaf = optimizer.latencyState.entry(id: "fast")
         let window = mount(optimizer, ids: ["fast", "pending"])
-        try await expect(window, id: "fast", label: "Latency unmeasured")
+        try await expect(window, latency: false, name: "unmeasured")
         let run = Task { @MainActor in
-            await optimizer.speedTestAll(sessionId: nil, includeAllAccounts: true)
+            await optimizer.speedTestAll(sessionId: nil, perEntryTimeout: 60, includeAllAccounts: true)
         }
         for _ in 0..<100 {
             if optimizer.held.count == 2 { break }
@@ -93,25 +111,27 @@ def run_swiftui_test(harness, picker, tmp):
         }
         assert(optimizer.held.count == 2)
         optimizer.held.removeValue(forKey: "fast")!.resume()
-        try await expect(window, id: "fast", label: "0.3s")
+        try await expect(window, latency: true, name: "first-live")
         assert(optimizer.speedTestStatus.running && optimizer.held["pending"] != nil)
-        try await expect(window, id: "pending", label: "Latency unmeasured")
+        assert(optimizer.latencyState.entry(id: "pending").result.seconds == nil)
         print("PASS: real SwiftUI List renders first production badge while another probe is held indefinitely")
         window.close()
         let reopened = mount(optimizer, ids: ["pending", "fast"])
-        try await expect(reopened, id: "fast", label: "0.3s")
+        try await expect(reopened, latency: true, name: "reopened")
         assert(optimizer.latencyState.entry(id: "fast") === leaf && optimizer.speedTestStatus.running)
         print("PASS: reopened/reordered List retains entry identity and displays current badge during active run")
         optimizer.holdRequests = false
         optimizer.releaseHeld()
         await run.value
+        reopened.close()
+        let recovery = mount(optimizer, ids: ["fast"])
         optimizer.failures["fast"] = "network unavailable"
         await optimizer.speedTestInstance(instanceId: "A", sessionId: nil)
-        try await expect(reopened, id: "fast", label: "Latency test failed")
+        try await expect(recovery, latency: false, failed: true, name: "failed")
         optimizer.failures.removeAll()
         await optimizer.speedTestInstance(instanceId: "A", sessionId: nil)
-        try await expect(reopened, id: "fast", label: "0.3s")
-        reopened.close()
+        try await expect(recovery, latency: true, name: "recovered")
+        recovery.close()
         print("PASS: real mounted SwiftUI badge replaces stale success with soft failure and recovers")
     }
 }
@@ -121,4 +141,4 @@ def run_swiftui_test(harness, picker, tmp):
     swift.write_text(program)
     subprocess.run(['swiftc', '-swift-version', '5', '-parse-as-library',
                     str(swift), '-o', str(binary)], check=True, timeout=90)
-    subprocess.run([str(binary)], check=True, timeout=30)
+    subprocess.run([str(binary)], check=True, timeout=90)

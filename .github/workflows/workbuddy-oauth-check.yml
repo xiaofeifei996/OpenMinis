@@ -97,9 +97,17 @@ jobs:
         run: |
           python3 scripts/test_quicktest_agent_fallback.py
 
-      - name: Test chat auto-helpers wiring
+      - name: Test chat auto-helpers and live SwiftUI List rendering
         run: |
           python3 scripts/test_chat_optimizer.py
+
+      - name: Upload SwiftUI rendering evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: speedtest-swiftui-evidence-${{ github.sha }}
+          path: build/speedtest-ui/
+          if-no-files-found: warn
 
       - name: Validate Xcode project prerequisites
         shell: bash

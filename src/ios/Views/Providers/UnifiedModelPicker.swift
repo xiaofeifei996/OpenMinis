@@ -1602,7 +1602,11 @@ struct UnifiedModelPicker: View {
         @ObservedObject private var state: ModelLatencyEntryState
         let entryId: String
 
-        init(entryId: String, optimizer: ChatOptimizer = .shared) {
+        init(entryId: String) {
+            self.init(entryId: entryId, optimizer: ChatOptimizer.shared)
+        }
+
+        init(entryId: String, optimizer: ChatOptimizer) {
             self.entryId = entryId
             _state = ObservedObject(wrappedValue: optimizer.latencyState.entry(id: entryId))
         }

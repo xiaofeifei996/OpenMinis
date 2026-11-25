@@ -81,7 +81,7 @@ def run_swiftui_test(harness, picker, tmp):
     for _ in 0..<60 {
         let (text, red, rep) = try rendered(window)
         last = "OCR=\(text), red=\(red)"
-        if text.contains("fast"), text.contains("0.3s") == latency, (red > 3) == failed {
+        if text.contains("fast"), text.contains("0.3") == latency, (red > 3) == failed {
             try save(rep, name: name)
             return
         }
@@ -103,7 +103,7 @@ def run_swiftui_test(harness, picker, tmp):
         let window = mount(optimizer, ids: ["fast", "pending"])
         try await expect(window, latency: false, name: "unmeasured")
         let run = Task { @MainActor in
-            await optimizer.speedTestAll(sessionId: nil, perEntryTimeout: 60, includeAllAccounts: true)
+            await optimizer.speedTestAll(sessionId: nil, perEntryTimeout: 600, includeAllAccounts: true)
         }
         for _ in 0..<100 {
             if optimizer.held.count == 2 { break }

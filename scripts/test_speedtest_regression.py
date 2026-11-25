@@ -128,7 +128,7 @@ struct TestLog { func info(_ text: String) {} }
         held.removeAll()
         for continuation in pending.values { continuation.resume() }
     }
-    private func performLatencyProbe(entry: ModelEntry, sessionId: String?) async -> LatencyProbe {
+    private func performLatencyProbe(entry: ModelEntry, sessionId: String?, startedAt: Date) async -> LatencyProbe {
         starts[entry.id, default: 0] += 1
         launchAccounts.append(entry.providerInstanceId)
         realActive += 1

@@ -176,7 +176,10 @@ UIApplicationMain(CommandLine.argc, CommandLine.unsafeArgv, nil, NSStringFromCla
     try:
         run('xcrun', 'simctl', 'boot', device, timeout=60)
         run('xcrun', 'simctl', 'bootstatus', device, '-b', timeout=300)
-        run('xcrun', 'simctl', 'install', device, str(app), timeout=90)
+        # Fresh macOS hosted runners can finish bootstatus while installd is
+        # still warming up (CI previously timed out at 90s). Keep this bounded;
+        # an install failure must still fail the regression, never skip it.
+        run('xcrun', 'simctl', 'install', device, str(app), timeout=300)
         run('xcrun', 'simctl', 'launch', '--console', '--terminate-running-process', device, bundle, timeout=120)
         container = subprocess.check_output(['xcrun', 'simctl', 'get_app_container', device, bundle, 'data'], text=True).strip()
         evidence = ROOT / 'build/speedtest-ui'

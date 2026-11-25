@@ -24,6 +24,9 @@ def section(start, end):
 checks = {
     'default bounded parallelism and per-account cap':
         'concurrency: Int = 4' in source and 'let accountLimit = min(2, globalLimit)' in source,
+    'task-group scheduler helpers explicitly retain main-actor isolation':
+        'withTaskGroup(of: (String, String, LatencyProbe).self) { @MainActor group in' in source
+        and '@MainActor func nextReady()' in source and '@MainActor func pump()' in source,
     'no serial rendering sleep': '50_000_000' not in source and 'concurrency: 1,' not in picker,
     'single process-wide run with manual queue upgrade':
         'speedTestWaiters.append($0)' in source and 'includeAllAccountsRequested || includeAllAccounts' in source,

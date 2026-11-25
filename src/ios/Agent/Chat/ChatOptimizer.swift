@@ -558,14 +558,14 @@ final class ChatOptimizer {
         var retried: Set<String> = []            // entries given their one retry
         var exhaustedAccounts: Set<String> = []
 
-        await withTaskGroup(of: (String, String, LatencyProbe).self) { group in
+        await withTaskGroup(of: (String, String, LatencyProbe).self) { @MainActor group in
             var inFlight = 0
             var scheduled: [String: String] = [:]
             var lastStartedAccount: String?
 
             /// Never fill all slots from one account; prefer another account
             /// on each launch so a large aggregator cannot starve smaller ones.
-            func nextReady() -> ModelEntry? {
+            @MainActor func nextReady() -> ModelEntry? {
                 let now = Date()
                 let occupied = activeLatencyProbes.merging(scheduled) { current, _ in current }
                 guard occupied.count < globalLimit else { return nil }
@@ -579,7 +579,7 @@ final class ChatOptimizer {
                 return ready.first { $0.providerInstanceId != lastStartedAccount } ?? ready.first
             }
 
-            func pump() {
+            @MainActor func pump() {
                 enqueueRequestedEntries()
                 while inFlight < globalLimit, let entry = nextReady() {
                     queue.removeAll { $0.id == entry.id }

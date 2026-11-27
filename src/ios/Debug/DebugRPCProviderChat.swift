@@ -38,7 +38,7 @@ enum DebugRPCProvider {
             case .openAI, .anthropic: supportedCreds = ["apiKey", "oauth"]
             case .gemini, .antigravity: supportedCreds = ["oauth"]
             case .openRouter: supportedCreds = ["apiKey", "oauth"]
-            case .openAIResponses: supportedCreds = ["apiKey"]
+            case .today, .openAIResponses: supportedCreds = ["apiKey"]
             case .xAI: supportedCreds = ["apiKey", "oauth"]
             case .kimiCode: supportedCreds = ["oauth"]
             // [T-copilot-provider] OAuth only — there is no API-key form.
@@ -50,7 +50,7 @@ enum DebugRPCProvider {
             case .openAI, .openRouter, .openAIResponses, .gemini, .xAI, .kimiCode: customBaseSupported = true
             // Copilot's host is fixed; a custom base would just break the
             // header/endpoint contract the integration depends on.
-            case .anthropic, .antigravity, .githubCopilot, .workBuddyChina, .workBuddyAI, .raccoon, .unsupported: customBaseSupported = false
+            case .anthropic, .antigravity, .githubCopilot, .workBuddyChina, .workBuddyAI, .raccoon, .today, .unsupported: customBaseSupported = false
             case .autoClaw, .trae, .traeInternational: customBaseSupported = true
             }
             return [

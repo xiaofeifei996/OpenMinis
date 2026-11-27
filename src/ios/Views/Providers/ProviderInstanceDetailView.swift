@@ -206,6 +206,14 @@ struct ProviderInstanceDetailView: View {
     @ViewBuilder
     private func instanceContent(_ instance: ProviderInstance) -> some View {
         List {
+            if instance.providerType == .today {
+                Section {
+                    Label(AppLocalized("Messages are sent to your Today AI account's shared main chat and may affect the website's conversation and context. Text only: images and agent tools are not supported. Canceling only stops local waiting and does not guarantee that upstream generation or billing stops."), systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                } header: {
+                    Text("Today AI Shared Chat Warning")
+                }
+            }
             // MARK: Label
             Section("Label") {
                 TextField("Label", text: $editingLabel)
@@ -238,13 +246,19 @@ struct ProviderInstanceDetailView: View {
             } header: {
                 Text("Credential")
             } footer: {
-                Text(instance.credentialType == .apiKey
-                     ? "API key is stored securely in the iOS Keychain."
-                     : "OAuth tokens are stored per-instance in the iOS Keychain.")
+                if instance.providerType == .today {
+                    Text("Paste the __Secure-better-auth.session_token cookie from your signed-in todayai.cn session. It is stored securely in the iOS Keychain.")
+                } else {
+                    Text(instance.credentialType == .apiKey
+                         ? "API key is stored securely in the iOS Keychain."
+                         : "OAuth tokens are stored per-instance in the iOS Keychain.")
+                }
             }
 
             // MARK: Custom Base URL
-            customBaseURLSection(instance)
+            if instance.providerType != .today {
+                customBaseURLSection(instance)
+            }
 
             // [T-mimo-shadow-voice] These LLM-config fields are gated by their own
             // providerType/capability checks (supportsCustomUserAgent, API-format
@@ -672,6 +686,7 @@ struct ProviderInstanceDetailView: View {
         case .autoClaw: return AutoClawAPI.defaultBase
         case .trae: return TraeAPI.Site.china.apiOrigin
         case .traeInternational: return TraeAPI.Site.international.apiOrigin
+        case .today: return "https://todayai.cn"
         case .unsupported: return "—"
         }
     }
@@ -1108,7 +1123,7 @@ struct ProviderInstanceDetailView: View {
         case .openAI: return CodexOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .antigravity: return AntigravityOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .openRouter: return OpenRouterOAuthManager.shared.isAuthenticated(instanceId: instance.id)
-        case .openAIResponses: return false // API key only
+        case .today, .openAIResponses: return false // API key only
         case .xAI: return XAIOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .kimiCode: return KimiOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .githubCopilot: return CopilotOAuthManager.shared.isAuthenticated(instanceId: instance.id)
@@ -1163,7 +1178,7 @@ struct ProviderInstanceDetailView: View {
                 return OpenRouterOAuthManager.shared.maskedToken(instanceId: instance.id) ?? AppLocalized("Authenticated")
             }
             return AppLocalized("Not authenticated")
-        case .openAIResponses:
+        case .today, .openAIResponses:
             return AppLocalized("Not applicable") // API key only
         case .xAI:
             if XAIOAuthManager.shared.isAuthenticated(instanceId: instance.id) {
@@ -1230,6 +1245,7 @@ struct ProviderInstanceDetailView: View {
         case .autoClaw: return "使用智谱账号登录"
         case .trae: return "使用 Trae 账号登录"
         case .traeInternational: return "使用 Trae 国际版账号登录"
+        case .today: return AppLocalized("Use a Today AI session cookie")
         case .unsupported: return AppLocalized("Sign In")
         }
     }
@@ -1242,6 +1258,7 @@ struct ProviderInstanceDetailView: View {
             case .openAI: try await CodexOAuthManager.shared.login(instanceId: instance.id)
             case .antigravity: try await AntigravityOAuthManager.shared.login(instanceId: instance.id)
             case .openRouter: try await OpenRouterOAuthManager.shared.login(instanceId: instance.id)
+            case .today: return // Cookie-only; no OAuth flow.
             case .openAIResponses: break
             case .xAI: try await XAIOAuthManager.shared.login(instanceId: instance.id)
             case .kimiCode: break // device-code flow runs in KimiDeviceLoginSheet
@@ -1295,7 +1312,7 @@ struct ProviderInstanceDetailView: View {
         case .openAI: CodexOAuthManager.shared.logout(instanceId: instance.id)
         case .antigravity: AntigravityOAuthManager.shared.logout(instanceId: instance.id)
         case .openRouter: OpenRouterOAuthManager.shared.logout(instanceId: instance.id)
-        case .openAIResponses: break // API key only
+        case .today, .openAIResponses: break // API key only
         case .xAI: XAIOAuthManager.shared.logout(instanceId: instance.id)
         case .kimiCode: KimiOAuthManager.shared.logout(instanceId: instance.id)
         case .githubCopilot: CopilotOAuthManager.shared.logout(instanceId: instance.id)
@@ -1320,7 +1337,7 @@ struct ProviderInstanceDetailView: View {
             token = try? await AntigravityOAuthManager.shared.validAccessToken(instanceId: instance.id)
         case .openRouter:
             token = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id)
-        case .openAIResponses:
+        case .today, .openAIResponses:
             token = nil
         case .xAI:
             token = try? await XAIOAuthManager.shared.validAccessToken(instanceId: instance.id)
@@ -1357,6 +1374,7 @@ struct ProviderInstanceDetailView: View {
         case .raccoon: return "" // OAuth only
         case .autoClaw: return "" // OAuth only
         case .trae, .traeInternational: return "" // OAuth only
+        case .today: return "__Secure-better-auth.session_token=..."
         case .antigravity: return "API Key..."
         case .openRouter: return "sk-or-..."
         case .openAIResponses: return "sk-..."

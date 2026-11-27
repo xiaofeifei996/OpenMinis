@@ -673,6 +673,14 @@ struct AddProviderView: View {
 
     private var configureSection: some View {
         Group {
+            if selectedType == .today {
+                Section {
+                    Label(AppLocalized("Messages are sent to your Today AI account's shared main chat and may affect the website's conversation and context. Text only: images and agent tools are not supported. Canceling only stops local waiting and does not guarantee that upstream generation or billing stops."), systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                } header: {
+                    Text("Today AI Shared Chat Warning")
+                }
+            }
             Section("Label") {
                 TextField("Provider label", text: $labelInput)
                     // [T-provider-label-keyboard] Declare the keyboard EXPLICITLY.
@@ -800,12 +808,16 @@ struct AddProviderView: View {
                         .buttonStyle(.plain)
                     }
                 } header: {
-                    Text("API Key")
+                    Text(selectedType == .today ? AppLocalized("Session Cookie") : AppLocalized("API Key"))
                 } footer: {
-                    Text("Your key is stored securely in the iOS Keychain and never leaves the device.")
+                    if selectedType == .today {
+                        Text("Paste the __Secure-better-auth.session_token cookie from your signed-in todayai.cn session. It is stored securely in the iOS Keychain.")
+                    } else {
+                        Text("Your key is stored securely in the iOS Keychain and never leaves the device.")
+                    }
                 }
 
-            if selectedType != .antigravity {
+            if selectedType != .antigravity && selectedType != .today {
                 customBaseURLSection
             }
 
@@ -1012,6 +1024,7 @@ struct AddProviderView: View {
         case .autoClaw: return AutoClawAPI.defaultBase
         case .trae: return TraeAPI.Site.china.apiOrigin
         case .traeInternational: return TraeAPI.Site.international.apiOrigin
+        case .today: return "https://todayai.cn"
         default: return "https://api.example.com"
         }
     }
@@ -1094,6 +1107,7 @@ struct AddProviderView: View {
             case .openAI: try await CodexOAuthManager.shared.login(instanceId: pendingInstanceId)
             case .antigravity: try await AntigravityOAuthManager.shared.login(instanceId: pendingInstanceId)
             case .openRouter: try await OpenRouterOAuthManager.shared.login(instanceId: pendingInstanceId)
+            case .today: return // Cookie-only; no OAuth flow.
             case .openAIResponses: break // API key only, no OAuth
             case .xAI: try await XAIOAuthManager.shared.login(instanceId: pendingInstanceId)
             case .kimiCode: break // device-code flow runs in KimiDeviceLoginSheet, not here
@@ -1240,7 +1254,7 @@ struct AddProviderView: View {
         case .openRouter:
             // OpenRouter OAuth produces a permanent API key, not an OAuth token
             token = ProviderKeychainHelper.loadAPIKey(instanceId: pendingInstanceId)
-        case .openAIResponses:
+        case .today, .openAIResponses:
             token = nil // API key only, no OAuth
         case .xAI:
             token = ProviderKeychainHelper.loadOAuthToken(instanceId: pendingInstanceId, as: XAITokenStorage.self)?.accessToken
@@ -1366,6 +1380,7 @@ struct AddProviderView: View {
         case .autoClaw: return "使用智谱账号登录"
         case .trae: return "使用 Trae 账号登录"
         case .traeInternational: return "使用 Trae 国际版账号登录"
+        case .today: return AppLocalized("Use a Today AI session cookie")
         case .unsupported: return AppLocalized("Sign In")
         }
     }
@@ -1387,6 +1402,7 @@ struct AddProviderView: View {
         case .raccoon: return "xiaohuanxiong.com access token"
         case .autoClaw: return "AutoClaw access token"
         case .trae, .traeInternational: return ""
+        case .today: return "__Secure-better-auth.session_token=..."
         case .unsupported: return ""
         }
     }
@@ -1408,6 +1424,7 @@ struct AddProviderView: View {
         case .autoClaw: return "AutoClaw（智谱 AutoGLM）"
         case .trae: return "Trae（字节跳动）"
         case .traeInternational: return "Trae 国际版"
+        case .today: return "Today AI"
         case .unsupported: return AppLocalized("Unsupported")
         }
     }
@@ -1453,6 +1470,10 @@ struct AddProviderView: View {
         case .trae, .traeInternational:
             // Browser sign-in, plus the same manual escape hatch.
             return [.oauth]
+        case .today:
+            // The browser session cookie is entered through the protected
+            // credential field and stored in the API-key Keychain slot.
+            return [.apiKey]
         case .openAIResponses, .gemini:
             return [.apiKey]
         default:
@@ -1508,6 +1529,8 @@ struct AddProviderView: View {
             return "打开 WorkBuddy AI 登录（国际版，需对应区域账号）"
         case (.workBuddyChina, .apiKey):
             return AppLocalized("WorkBuddy China requires an account access token and account headers.")
+        case (.today, .apiKey):
+            return AppLocalized("Paste the __Secure-better-auth.session_token cookie from your signed-in todayai.cn session. It is stored securely in the iOS Keychain.")
         case (.githubCopilot, _):
             // [T-copilot-provider] The risk warning belongs where the user
             // decides, not only inside the sign-in sheet.
@@ -1559,6 +1582,9 @@ struct AddProviderView: View {
         case .trae, .traeInternational:
             Image(systemName: "chevron.left.forwardslash.chevron.right")
                 .foregroundStyle(.indigo)
+        case .today:
+            Image(systemName: "sun.max.fill")
+                .foregroundStyle(.orange)
         case .githubCopilot:
             Image(systemName: "chevron.left.forwardslash.chevron.right")
                 .foregroundStyle(.primary)
@@ -1584,6 +1610,7 @@ struct AddProviderView: View {
         case .raccoon: return .orange
         case .autoClaw: return .teal
         case .trae, .traeInternational: return .indigo
+        case .today: return .orange
         case .unsupported: return .gray
         }
     }

@@ -271,6 +271,7 @@
 		E5F000001 /* ISHExecutionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F000011 /* ISHExecutionCoordinator.swift */; };
 		E5F000002 /* MinisFsRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F000012 /* MinisFsRouter.swift */; };
 		E5F00001 /* LLMProviderFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F00002 /* LLMProviderFactory.swift */; };
+		D0A0B0C0D0E0F01500000001 /* TodayProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F01500000002 /* TodayProvider.swift */; };
 		E5F100001 /* NetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F100011 /* NetworkMonitor.swift */; };
 		E5F100002 /* LLMSessionRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F100012 /* LLMSessionRegistry.swift */; };
 		E5F100003 /* MinisUserAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F100013 /* MinisUserAgent.swift */; };
@@ -1061,6 +1062,7 @@
 		E5F000011 /* ISHExecutionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ISHExecutionCoordinator.swift; sourceTree = "<group>"; };
 		E5F000012 /* MinisFsRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinisFsRouter.swift; sourceTree = "<group>"; };
 		E5F00002 /* LLMProviderFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMProviderFactory.swift; sourceTree = "<group>"; };
+		D0A0B0C0D0E0F01500000002 /* TodayProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayProvider.swift; sourceTree = "<group>"; };
 		E5F100011 /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
 		E5F100012 /* LLMSessionRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMSessionRegistry.swift; sourceTree = "<group>"; };
 		E5F100013 /* MinisUserAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinisUserAgent.swift; sourceTree = "<group>"; };
@@ -1786,6 +1788,7 @@
 				E5OARC031 /* OAuthRefreshSingleFlight.swift */,
 				E52000013 /* LLMProvider.swift */,
 				E5F00002 /* LLMProviderFactory.swift */,
+				D0A0B0C0D0E0F01500000002 /* TodayProvider.swift */,
 				E59000011 /* AgentProvider.swift */,
 				E5D00011 /* ProviderTypes.swift */,
 				E5D00012 /* ProviderInstance.swift */,
@@ -3226,6 +3229,7 @@
 				E52000002 /* LLMError.swift in Sources */,
 				E52000003 /* LLMProvider.swift in Sources */,
 				E5F00001 /* LLMProviderFactory.swift in Sources */,
+				D0A0B0C0D0E0F01500000001 /* TodayProvider.swift in Sources */,
 				E52000004 /* AnthropicProvider.swift in Sources */,
 				E52000006 /* OAuthHTTPClient.swift in Sources */,
 				E52000007 /* ClaudeOAuthManager.swift in Sources */,

@@ -48,6 +48,8 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
     case trae
     /// Trae international, with an explicit international sign-in site.
     case traeInternational
+    /// Today AI China, whose web API uses a session cookie and canonical-v1 polling.
+    case today
     /// Sentinel for a provider type this app build doesn't recognize — e.g. a
     /// NEWER build synced an instance whose `provider_type` string isn't a known
     /// case here. We DECODE to this instead of throwing/dropping, so the instance
@@ -79,6 +81,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .autoClaw: return "AutoClaw（智谱 AutoGLM）"
         case .trae: return "Trae（字节跳动）"
         case .traeInternational: return "Trae 国际版"
+        case .today: return "Today AI"
         case .unsupported: return "Unsupported"
         }
     }
@@ -121,6 +124,10 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .trae, .traeInternational:
             // The directory's roster is the only list of callable models.
             return true
+        case .today:
+            // Today uses a cookie credential, not OAuth; its model catalog is
+            // fetched by the native provider's API-key branch.
+            return false
         case .openAI:
             // OpenAIModelsAPI.fetchModelsOAuth() is a compiled-in list.
             return false
@@ -200,6 +207,10 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
                     maxOutputTokens: 64_000
                 )
             ]
+        case .today:
+            // Only the account's live pricing catalog defines callable models.
+            // An empty or null catalog must not advertise a guessed model.
+            return []
         case .unsupported: return []
         }
     }
@@ -236,6 +247,8 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
             return "使用 Trae 账号登录（内置浏览器，非官方接口）"
         case .traeInternational:
             return "使用 Trae 国际版账号登录（内置浏览器，非官方接口）"
+        case .today:
+            return AppLocalized("Sign in with a Today AI web session cookie — unofficial, use at your own risk")
         case .antigravity:
             return AppLocalized("\(builtInModels.count) built-in models")
         case .unsupported:
@@ -259,7 +272,7 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .workBuddyAI: return .vision
         case .raccoon: return .vision
         case .autoClaw: return .vision
-        case .trae, .traeInternational: return .textOnly
+        case .trae, .traeInternational, .today: return .textOnly
         case .unsupported: return .vision
         }
     }

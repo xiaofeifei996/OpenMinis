@@ -3415,6 +3415,15 @@ final class ProviderConfigStore: ObservableObject {
             // refresh right after sign-in works without any extra priming.
             let token = try await CopilotOAuthManager.shared.validSessionToken(instanceId: instance.id)
             return try await CopilotModelsAPI.fetchModels(sessionToken: token)
+        case (.today, .apiKey):
+            guard let cookie = modelFetchAPIKey(for: instance) else {
+                throw ModelRefreshError.noCredential
+            }
+            return try await TodayProvider.fetchModels(sessionCookie: cookie)
+        case (.today, .oauth):
+            // Today only accepts a session cookie in the API-key slot.
+            // Imported OAuth instances must not fabricate a successful catalog.
+            throw ModelRefreshError.noCredential
         case (.unsupported, _):
             // Synced from a newer build — can't fetch; keep whatever's stored.
             return []
@@ -3524,6 +3533,12 @@ final class ProviderConfigStore: ObservableObject {
     /// Fetch models from the provider API, falling back to models.dev when the API
     /// returns an empty list or fails (e.g. custom base URL without /v1/models support).
     static func fetchModelsWithFallback(_ instance: ProviderInstance, forceRefresh: Bool = false) async throws -> ModelFetchResult {
+        // The account-scoped Today pricing catalog is authoritative, including
+        // an empty list. Never replace it with models.dev or guessed defaults.
+        if instance.providerType == .today {
+            let models = try await fetchModelsForInstance(instance, forceRefresh: forceRefresh)
+            return ModelFetchResult(models: models, source: "api", warnings: [])
+        }
         var warnings: [String] = []
         let isThirdParty = isThirdPartyOpenAICompat(instance)
         // [T-ios-model-refresh-visible] Why the provider's own list is not
@@ -3609,6 +3624,7 @@ final class ProviderConfigStore: ObservableObject {
         case .autoClaw: return AutoClawAPI.defaultBase
         case .trae: return TraeAPI.Site.china.apiOrigin
         case .traeInternational: return TraeAPI.Site.international.apiOrigin
+        case .today: return "https://todayai.cn"
         case .gemini: return "https://generativelanguage.googleapis.com"
         case .openRouter: return "https://openrouter.ai/api"
         case .antigravity: return nil // No public base URL

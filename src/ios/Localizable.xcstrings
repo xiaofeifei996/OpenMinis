@@ -27376,6 +27376,23 @@
         }
       }
     },
+    "Messages are sent to your Today AI account's shared main chat and may affect the website's conversation and context. Text only: images and agent tools are not supported. Canceling only stops local waiting and does not guarantee that upstream generation or billing stops." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Messages are sent to your Today AI account's shared main chat and may affect the website's conversation and context. Text only: images and agent tools are not supported. Canceling only stops local waiting and does not guarantee that upstream generation or billing stops."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "消息会发送到您的 Today AI 账号共享主聊天，可能影响官网会话及上下文。仅支持文本，不支持图片或 Agent 工具。取消仅停止本地等待，不保证停止上游生成或计费。"
+          }
+        }
+      }
+    },
     "MetricKit Reports" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -32917,6 +32934,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "部分提速"
+          }
+        }
+      }
+    },
+    "Paste the __Secure-better-auth.session_token cookie from your signed-in todayai.cn session. It is stored securely in the iOS Keychain." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paste the __Secure-better-auth.session_token cookie from your signed-in todayai.cn session. It is stored securely in the iOS Keychain."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "粘贴已登录 todayai.cn 网页的 __Secure-better-auth.session_token Cookie。凭据将安全地保存在 iOS 钥匙串中。"
           }
         }
       }
@@ -41078,6 +41112,23 @@
         }
       }
     },
+    "Session Cookie" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Session Cookie"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会话 Cookie"
+          }
+        }
+      }
+    },
     "Sessions Deleted" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -42791,6 +42842,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用 GitHub 登录"
+          }
+        }
+      }
+    },
+    "Sign in with a Today AI web session cookie — unofficial, use at your own risk" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in with a Today AI web session cookie — unofficial, use at your own risk"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 Today AI 网页会话 Cookie 登录——非官方接口，风险自担"
           }
         }
       }
@@ -50691,6 +50759,23 @@
         }
       }
     },
+    "Today AI Shared Chat Warning" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Today AI Shared Chat Warning"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Today AI 共享主聊天风险提示"
+          }
+        }
+      }
+    },
     "Toggles reading replies aloud" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -54023,6 +54108,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "開啟螢幕保護"
+          }
+        }
+      }
+    },
+    "Use a Today AI session cookie" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use a Today AI session cookie"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 Today AI 会话 Cookie"
           }
         }
       }

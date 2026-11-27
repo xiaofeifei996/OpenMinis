@@ -241,7 +241,7 @@ extension AIChatViewModel {
         // [T-copilot-provider] Copilot's /models reports `supports.thinking`
         // per model, so an explicit false there is authoritative — it belongs
         // with the strict group, not the permissive one.
-        case .anthropic, .gemini, .antigravity, .githubCopilot, .unsupported:
+        case .anthropic, .gemini, .antigravity, .githubCopilot, .today, .unsupported:
             return false
         }
     }
@@ -323,7 +323,7 @@ extension AIChatViewModel {
             case .openAI, .openAIResponses, .openRouter, .xAI, .kimiCode, .githubCopilot,
              .workBuddyChina, .workBuddyAI, .raccoon, .autoClaw, .trae, .traeInternational:
                 level = OpenAIAgentProvider.reasoningEffort(for: model, level: thinkLvl) ?? "—"
-            case .unsupported:
+            case .today, .unsupported:
                 level = "—"
             case .antigravity:
                 let lid = model.id.lowercased()

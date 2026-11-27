@@ -79,7 +79,7 @@ enum QuotaVendorDetector {
         // vendor's own web console — no documented API, so the passive
         // "unsupported" adapter is the honest answer. A custom base URL still
         // resolves through the relay path above.
-        case .workBuddyChina, .workBuddyAI, .raccoon, .autoClaw, .trae, .traeInternational: return .unknown
+        case .workBuddyChina, .workBuddyAI, .raccoon, .autoClaw, .trae, .traeInternational, .today: return .unknown
         case .unsupported: return .unknown
         }
     }

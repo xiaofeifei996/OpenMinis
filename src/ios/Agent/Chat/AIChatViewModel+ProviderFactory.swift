@@ -140,6 +140,8 @@ extension AIChatViewModel {
             return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeAutoClawProvider(instance: instance, model: entry.model)))
         case .trae, .traeInternational:
             return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeTraeProvider(instance: instance, model: entry.model)))
+        case .today:
+            return TodayAgentProvider(provider: LLMProviderFactory.makeTodayProvider(instance: instance, model: entry.model))
         case .githubCopilot:
             // [T-copilot-no-chat-warning] No warning in the chat.
             //
@@ -539,4 +541,59 @@ extension AIChatViewModel {
         return ordered
     }
 
+}
+
+/// Today supports text chat only: tool definitions are not sent and tool calls
+/// are never generated. Keep this adapter here to reuse existing build/CI entries.
+private struct TodayAgentProvider: AgentProvider {
+    let provider: TodayProvider
+
+    var name: String { provider.name }
+    var model: LLMModel { provider.model.withModalityOverride(.textOnly) }
+    var defaultMaxTokens: Int { model.maxOutputTokens ?? 16_384 }
+
+    func streamAgentMessageClamped(
+        messages: [AgentMessage],
+        systemPrompt: String?,
+        tools: [AgentToolDefinition],
+        maxTokens: Int,
+        thinkingLevel: ThinkingLevel
+    ) async throws -> AsyncThrowingStream<AgentStreamEvent, Error> {
+        try Task.checkCancellation()
+        let textMessages = try messages.map { message in
+            let text = try message.parts.map { part -> String in
+                guard case .text(let text) = part else {
+                    throw NSError(
+                        domain: "TodayAgentProvider", code: 1,
+                        userInfo: [NSLocalizedDescriptionKey:
+                            "Today AI only supports text chat; images, tool calls and tool results are not supported."]
+                    )
+                }
+                return text
+            }.joined(separator: "\n")
+            return LLMMessage(role: message.role == .user ? .user : .assistant, content: text)
+        }
+        // `tools` lists available definitions, not actual calls. A nonempty
+        // list must not prevent ordinary text chat. Thinking is unsupported.
+        let provider = self.provider
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try Task.checkCancellation()
+                    let response = try await provider.sendMessage(
+                        messages: textMessages, systemPrompt: systemPrompt,
+                        maxTokens: maxTokens, temperature: nil
+                    )
+                    try Task.checkCancellation()
+                    continuation.yield(.contentBlockStart(.text))
+                    continuation.yield(.textDelta(response.text))
+                    continuation.yield(.done(stopReason: .endTurn))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
+    }
 }

@@ -103,6 +103,9 @@ enum ProviderMigration {
             case .trae, .traeInternational:
                 // Trae is new as well; no legacy singleton token.
                 break
+            case .today:
+                // Cookie-only provider; no legacy OAuth token to migrate.
+                break
             case .unsupported:
                 break
             }

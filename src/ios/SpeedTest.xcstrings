@@ -17,6 +17,30 @@
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "無法匯出測速診斷" } }
       }
     },
+    "Response latency: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Response latency: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "回复延迟：%@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "回覆延遲：%@" } }
+      }
+    },
+    "Timed out" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Timed out" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "超时" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "逾時" } }
+      }
+    },
+    "Speed test timed out; model availability is unknown" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Speed test timed out; model availability is unknown" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "测速超时，无法据此判断模型是否可用" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "測速逾時，無法據此判斷模型是否可用" } }
+      }
+    },
     "First-token latency: %@" : {
       "extractionState" : "manual",
       "localizations" : {

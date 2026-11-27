@@ -56,7 +56,7 @@ def run_swiftui_test(harness, picker, tmp):
     for y in stride(from: 0, to: rep.pixelsHigh, by: 2) {
         for x in stride(from: rep.pixelsWide - 300, to: rep.pixelsWide, by: 2) {
             let offset = y * rep.bytesPerRow + x * 4
-            if data[offset] > 160 && data[offset + 1] < 150 && data[offset + 2] < 150 { red += 1 }
+            if data[offset] > 160 && data[offset + 1] < 100 && data[offset + 2] < 150 { red += 1 }
         }
     }
     return (text, red, rep)
@@ -76,12 +76,14 @@ def run_swiftui_test(harness, picker, tmp):
     host.layoutSubtreeIfNeeded()
     return window
 }
-@MainActor func expect(_ window: NSWindow, latency: Bool, failed: Bool = false, name: String) async throws {
+@MainActor func expect(_ window: NSWindow, latency: Bool, failed: Bool = false,
+                       timedOut: Bool = false, name: String) async throws {
     var last = ""
     for _ in 0..<60 {
         let (text, red, rep) = try rendered(window)
         last = "OCR=\(text), red=\(red)"
-        if text.contains("fast"), text.contains("0.3") == latency, (red > 3) == failed {
+        if text.contains("fast"), text.contains("0.3") == latency,
+           text.contains("timedout") == timedOut, (red > 3) == failed {
             try save(rep, name: name)
             return
         }
@@ -128,6 +130,11 @@ def run_swiftui_test(harness, picker, tmp):
         optimizer.failures["fast"] = "network unavailable"
         await optimizer.speedTestInstance(instanceId: "A", sessionId: nil)
         try await expect(recovery, latency: false, failed: true, name: "failed")
+        optimizer.failures["fast"] = "first-token timeout"
+        await optimizer.speedTestInstance(instanceId: "A", sessionId: nil)
+        try await expect(recovery, latency: false, timedOut: true, name: "timed-out-not-unavailable")
+        optimizer.recordSuccessfulTextQuickTest(entry: optimizer.catalog[0])
+        try await expect(recovery, latency: false, name: "text-verified-without-fake-ttft")
         optimizer.failures.removeAll()
         await optimizer.speedTestInstance(instanceId: "A", sessionId: nil)
         try await expect(recovery, latency: true, name: "recovered")

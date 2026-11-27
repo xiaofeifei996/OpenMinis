@@ -51,6 +51,7 @@ struct ModelLatencyResult: Equatable {
     var seconds: Double?
     var error: String?
     var phase: ModelLatencyPhase = .finished
+    var isTimeout: Bool { LatencyProbe(seconds: nil, error: error).isTimeout }
 }
 
 /// Bounded, memory-only trace of the REAL app chain. No URL, credential,
@@ -217,6 +218,18 @@ final class ModelSpeedTestStatus: ObservableObject {
 struct LatencyProbe: Sendable {
     let seconds: Double?
     let error: String?
+    var retryAllowed: Bool = true
+    // Keep the legacy deadline token readable without rewriting durable caches.
+    // The UI describes this as a TEST timeout, never as model unavailability.
+    var isTimeout: Bool {
+        error == "first-token timeout" || error == "Today AI did not finish the request in time."
+    }
+}
+
+struct LatencyProbePolicy {
+    let isToday: Bool
+    var accountLimit: Int { isToday ? 1 : 2 }
+    var timeout: TimeInterval { isToday ? TodayCompletionPolicy.latencyProbeTimeout : 12 }
 }
 
 /// All methods run on the main actor, so registration and the single winner
@@ -234,7 +247,7 @@ private final class LatencyProbeRace {
         guard !finished else { return }
         finished = true
         ModelLatencyDiagnostics.shared.record("probe-finish", id: entryId,
-            source: result.seconds != nil ? "success" : (result.error == "first-token timeout" ? "deadline" : "failure"))
+            source: result.seconds != nil ? "success" : (result.isTimeout ? "deadline" : "failure"))
         let continuation = self.continuation
         self.continuation = nil
         request?.cancel()
@@ -277,6 +290,9 @@ final class ChatOptimizer {
     // Includes requests whose deadline fired but whose opener ignored cancel.
     // Never reuse their permits until the actual request task has stopped.
     private var activeLatencyProbes: [String: String] = [:] // entryId -> account
+    // A later successful text Quick Test supersedes an older probe failure,
+    // but its whole-response elapsed time is NOT a first-token measurement.
+    private var textValidationRevisions: [String: UInt] = [:]
 
     private init() {
         let data = UserDefaults.standard.data(forKey: ChatOptimizerSettings.latencyCacheKey)
@@ -487,17 +503,38 @@ final class ChatOptimizer {
         }
     }
 
-    /// Measure first-token latency for one entry using a tiny prompt.
-    /// Returns seconds, or an error string on failure.
+    private func latencyPolicy(for entry: ModelEntry) -> LatencyProbePolicy {
+        LatencyProbePolicy(isToday: store.instance(for: entry.providerInstanceId)?.providerType == .today)
+    }
+
+    /// A nonempty text Quick Test proves this entry worked, not its TTFT.
+    /// Clear stale failures without inserting its full-response elapsed time
+    /// into the latency rankings, or touching other entries/modality results.
+    func recordSuccessfulTextQuickTest(entry: ModelEntry) {
+        let id = entry.id
+        textValidationRevisions[id, default: 0] &+= 1
+        latencyState.cache.errors.removeValue(forKey: id)
+        latencyState.cache.unavailable.removeAll { $0 == id }
+        if latencyState.entry(id: id).result.phase == .finished { latencyState.publish(id: id) }
+        if !speedTestStatus.running { writeLatencyCache(readLatencyCache()) }
+        NotificationCenter.default.post(name: Self.latencyUpdatedNotification, object: nil,
+            userInfo: [Self.latencyChangedIdsKey: [id]])
+    }
+
+    /// Measure response latency for one entry using a tiny prompt.
+    /// Streaming providers measure TTFT; Today measures completed-reply latency.
+    /// An explicit timeout remains an override for callers and offline tests.
     func measureLatency(entry: ModelEntry, sessionId: String?,
-                        timeout: TimeInterval = 12) async -> LatencyProbe {
+                        timeout: TimeInterval? = nil) async -> LatencyProbe {
         // One deadline covers provider creation AND both request envelopes.
         // Retain real permits until the producer exits, even if a provider's
         // stream opener ignores cancellation. Late results cannot change cache.
         guard !Task.isCancelled else { return LatencyProbe(seconds: nil, error: "cancelled") }
+        let policy = latencyPolicy(for: entry)
+        let deadline = timeout ?? policy.timeout
         guard activeLatencyProbes[entry.id] == nil,
               activeLatencyProbes.count < 6,
-              activeLatencyProbes.values.filter({ $0 == entry.providerInstanceId }).count < 2 else {
+              activeLatencyProbes.values.filter({ $0 == entry.providerInstanceId }).count < policy.accountLimit else {
             return LatencyProbe(seconds: nil, error: "previous probe still stopping")
         }
         let race = LatencyProbeRace()
@@ -523,7 +560,7 @@ final class ChatOptimizer {
                 }
                 race.timer = Task { @MainActor in
                     do {
-                        try await Task.sleep(nanoseconds: UInt64(max(0.01, timeout) * 1_000_000_000))
+                        try await Task.sleep(nanoseconds: UInt64(max(0.01, deadline) * 1_000_000_000))
                         ModelLatencyDiagnostics.shared.record("deadline", id: entry.id)
                         race.finish(LatencyProbe(seconds: nil, error: "first-token timeout"))
                     } catch { /* another outcome won */ }
@@ -556,7 +593,9 @@ final class ChatOptimizer {
             // [T-latency-min-output] Many OpenAI-compat services reject a tiny
             // max_tokens with HTTP 400, so a WORKING model showed the red ✗. The
             // probe is streaming and returns on the FIRST token, so a large
-            // max_tokens costs nothing in latency.
+            // max_tokens costs nothing in TTFT for those streaming APIs.
+            // Today ignores this hint and yields only a completed reply; its
+            // independent policy budgets for the full native polling path.
             ModelLatencyDiagnostics.shared.record("stream-open-begin", id: entry.id, source: "plain")
             let stream = try await provider.streamMessage(
                 messages: messages,
@@ -567,7 +606,9 @@ final class ChatOptimizer {
             ModelLatencyDiagnostics.shared.record("stream-open-end", id: entry.id, source: "plain")
             for try await chunk in stream {
                 if case .text(let t) = chunk, !t.isEmpty {
-                    ModelLatencyDiagnostics.shared.record("first-token", id: entry.id, source: "plain")
+                    ModelLatencyDiagnostics.shared.record(
+                        latencyPolicy(for: entry).isToday ? "reply-completed" : "first-token",
+                        id: entry.id, source: "plain")
                     return LatencyProbe(seconds: Date().timeIntervalSince(start), error: nil)
                 }
             }
@@ -577,10 +618,15 @@ final class ChatOptimizer {
             if Task.isCancelled || error is CancellationError {
                 return LatencyProbe(seconds: nil, error: "cancelled")
             }
-            let failure = LatencyProbe(seconds: nil, error: msg)
+            let timedOut = (error as? URLError)?.code == .timedOut || TodayProvider.isCompletionTimeout(error)
+            let failure = LatencyProbe(seconds: nil, error: timedOut ? "first-token timeout" : msg,
+                retryAllowed: !TodayProvider.generationMayHaveBeenSubmitted(error))
             // A 429 must reach the account scheduler, not issue another request
             // through the agent envelope and double the throttled traffic.
             if Self.isThrottle(failure) { return failure }
+            // Today's plain/agent adapters reach the same paid POST + polling
+            // implementation. Retrying it cannot repair an envelope mismatch.
+            if latencyPolicy(for: entry).isToday || timedOut { return failure }
             // [T-latency-agent-path] The probe above sends the plain
             // `streamMessage` body. Gateways that validate the request against
             // the envelope the agent loop uses reject it outright — Raccoon
@@ -634,6 +680,9 @@ final class ChatOptimizer {
         } catch {
             let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             logger.info("[latency] \(entry.id) agent-path probe failed: \(msg)")
+            if (error as? URLError)?.code == .timedOut {
+                return LatencyProbe(seconds: nil, error: "first-token timeout")
+            }
             let failure = LatencyProbe(seconds: nil, error: msg)
             return Self.isThrottle(failure) ? failure : nil
         }
@@ -645,7 +694,7 @@ final class ChatOptimizer {
         await speedTestAll(sessionId: sessionId, instanceId: instanceId)
     }
 
-    func speedTestAll(sessionId: String?, concurrency: Int = 4, perEntryTimeout: TimeInterval = 12,
+    func speedTestAll(sessionId: String?, concurrency: Int = 4, perEntryTimeout: TimeInterval? = nil,
                       includeAllAccounts: Bool = false, instanceId: String? = nil,
                       progress: ((Int, Int) -> Void)? = nil) async {
         guard !Task.isCancelled else { return }
@@ -708,9 +757,8 @@ final class ChatOptimizer {
         var knownIds: Set<String> = []
         var done = 0
         let globalLimit = min(6, max(1, concurrency))
-        let accountLimit = min(2, globalLimit)
         ModelLatencyDiagnostics.shared.record("scheduler-policy",
-            source: "global:\(globalLimit),account:\(accountLimit)", delayMs: perEntryTimeout * 1000)
+            source: "global:\(globalLimit),account:2,today:1", delayMs: perEntryTimeout.map { $0 * 1000 })
         var completedByInstance: [String: Int] = [:]
         var totalsByInstance: [String: Int] = [:]
         var skippedByInstance: [String: Int] = [:]
@@ -809,6 +857,7 @@ final class ChatOptimizer {
         await withTaskGroup(of: (String, String, LatencyProbe).self) { @MainActor group in
             var inFlight = 0
             var scheduled: [String: String] = [:]
+            var validationAtStart: [String: UInt] = [:]
             var lastStartedAccount: String?
 
             /// Never fill all slots from one account; prefer another account
@@ -819,6 +868,7 @@ final class ChatOptimizer {
                 guard occupied.count < globalLimit else { return nil }
                 let ready = queue.filter { entry in
                     let providerId = entry.providerInstanceId
+                    let accountLimit = min(self.latencyPolicy(for: entry).accountLimit, globalLimit)
                     guard occupied[entry.id] == nil,
                           occupied.values.filter({ $0 == providerId }).count < accountLimit else { return false }
                     guard let until = blockedUntil[providerId] else { return true }
@@ -842,6 +892,10 @@ final class ChatOptimizer {
                     }
                     inFlight += 1
                     scheduled[entry.id] = entry.providerInstanceId
+                    validationAtStart[entry.id] = self.textValidationRevisions[entry.id, default: 0]
+                    ModelLatencyDiagnostics.shared.record("probe-policy", id: entry.id,
+                        account: entry.providerInstanceId,
+                        delayMs: (perEntryTimeout ?? self.latencyPolicy(for: entry).timeout) * 1000)
                     lastStartedAccount = entry.providerInstanceId
                     group.addTask {
                         let probe = await self.measureLatency(entry: entry, sessionId: sessionId,
@@ -893,7 +947,7 @@ final class ChatOptimizer {
                     // model defect, and must not erase a working model's badge.
                     latencyState.cache.errors.removeValue(forKey: id)
                     var queuedForRetry = false
-                    if !exhaustedAccounts.contains(providerId), !retried.contains(id),
+                    if probe.retryAllowed, !exhaustedAccounts.contains(providerId), !retried.contains(id),
                        let original = entries.first(where: { $0.id == id }) {
                         blockedUntil[providerId] = Date().addingTimeInterval(throttleCooldown)
                         ModelLatencyDiagnostics.shared.record("account-cooldown", account: providerId,
@@ -917,11 +971,14 @@ final class ChatOptimizer {
                     // for the UI, and do NOT add it to `unavailable` (which feeds
                     // auto-switch). The grey wifi is driven by `errors`, not
                     // `unavailable`.
-                    latencyState.cache.entries.removeValue(forKey: id)
-                    latencyState.cache.errors[id] = probe.error
+                    if validationAtStart[id] == textValidationRevisions[id, default: 0] {
+                        latencyState.cache.entries.removeValue(forKey: id)
+                        latencyState.cache.errors[id] = probe.error
+                        if probe.isTimeout { latencyState.cache.unavailable.removeAll { $0 == id } }
+                    }
                     complete(providerId)
                     reportProgress()
-                    publish(id: id, seconds: nil, error: probe.error)
+                    publish(id: id, seconds: latencyState.cache.entries[id], error: latencyState.cache.errors[id])
                 }
                 // Network awaits, not display sleeps, yield the main actor.
                 // Every result already published to the stable leaf observer.

@@ -216,6 +216,12 @@ final class TestSession: ObservableObject {
             do {
                 responseText = try await performTextProbe(entry: entry)
             } catch {
+                if Task.isCancelled || error is CancellationError { throw CancellationError() }
+                // Today already uses the same native completion + polling path
+                // in both adapters. A failure may follow a delivered paid POST.
+                if ProviderConfigStore.shared.instance(for: entry.providerInstanceId)?.providerType == .today {
+                    throw error
+                }
                 // [T-quicktest-agent-fallback] The plain probe uses the
                 // lightweight `streamMessage` envelope. Raccoon / 小浣熊
                 // rejects it with `400 param model unsupport` for every
@@ -225,7 +231,9 @@ final class TestSession: ObservableObject {
                 qtLog.info("[QuickTest] plain probe failed for \(entry.model.id): \(error.localizedDescription); retrying via agent path")
                 responseText = try await performAgentTextProbe(entry: entry)
             }
+            try Task.checkCancellation()
             let text = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { ChatOptimizer.shared.recordSuccessfulTextQuickTest(entry: entry) }
             return .text(text.isEmpty ? AppLocalized("(empty reply)") : text)
 
         case .imageGen:

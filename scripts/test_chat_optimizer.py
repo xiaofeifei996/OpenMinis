@@ -108,7 +108,7 @@ def main() -> int:
         ("a throttled row is retried once", "queue.append(original)"),
         ("stale throttle errors are cleared before deciding", "cleared \\(staleThrottle.count) stale throttle error"),
         ("manual test uses bounded concurrency", "concurrency: Int = 4"),
-        ("each account has its own concurrency limit", "let accountLimit = min(2, globalLimit)"),
+        ("each account has its provider-specific concurrency limit", "let accountLimit = min(self.latencyPolicy(for: entry).accountLimit, globalLimit)"),
         ("deadline is passed through to each probe", "timeout: perEntryTimeout"),
         ("reentrant callers join instead of racing", "await withCheckedContinuation { speedTestWaiters.append($0) }"),
     ]

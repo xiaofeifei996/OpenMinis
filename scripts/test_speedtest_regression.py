@@ -7,6 +7,7 @@ scheduler. UIKit geometry still requires device/UI validation.
 """
 from pathlib import Path
 import argparse
+import json
 import shutil
 import subprocess
 import tempfile
@@ -14,6 +15,8 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 source = (ROOT / 'src/ios/Agent/Chat/ChatOptimizer.swift').read_text()
 picker = (ROOT / 'src/ios/Views/Providers/UnifiedModelPicker.swift').read_text()
+today = (ROOT / 'src/ios/Providers/TodayProvider.swift').read_text()
+quick = (ROOT / 'src/ios/Views/Providers/ModelQuickTestSheet.swift').read_text()
 
 
 def section(start, end):
@@ -21,7 +24,17 @@ def section(start, end):
     return source[begin:source.index(end, begin)]
 
 
+strings = json.loads((ROOT / 'src/ios/SpeedTest.xcstrings').read_text())['strings']
+quick_success = section('    func recordSuccessfulTextQuickTest(', '    /// Measure response latency')
 checks = {
+    'Quick Test success never writes an elapsed time as TTFT or invalidates other entries':
+        'cache.entries[' not in quick_success
+        and 'cache.errors.removeValue(forKey: id)' in quick_success
+        and 'Self.latencyChangedIdsKey: [id]' in quick_success,
+    'new timeout and response-latency labels have English and both Chinese translations':
+        all(strings.get(key, {}).get('localizations', {}).get(locale, {}).get('stringUnit', {}).get('value')
+            for key in ['Timed out', 'Speed test timed out; model availability is unknown', 'Response latency: %@']
+            for locale in ['en', 'zh-Hans', 'zh-Hant']),
     'no real-time numeric stopwatch in the picker':
         'TimelineView(' not in picker and 'func elapsed(' not in source
         and 'case running(startedAt:' not in source,
@@ -38,8 +51,38 @@ checks = {
         all('"' + event + '"' in source for event in
             ['scheduler-policy', 'enqueue', 'account-cooldown', 'account-exhausted'])
         and 'delayMs: throttleCooldown * 1000' in source,
-    'default bounded parallelism and per-account cap':
-        'concurrency: Int = 4' in source and 'let accountLimit = min(2, globalLimit)' in source,
+    'default bounded parallelism and provider-specific per-account cap':
+        'concurrency: Int = 4' in source
+        and 'var accountLimit: Int { isToday ? 1 : 2 }' in source
+        and 'count < policy.accountLimit' in source
+        and 'min(self.latencyPolicy(for: entry).accountLimit, globalLimit)' in source,
+    'Today completion budget is derived from real poll and HTTP budgets only':
+        'var timeout: TimeInterval { isToday ? TodayCompletionPolicy.latencyProbeTimeout : 12 }' in source
+        and 'let deadline = timeout ?? policy.timeout' in source
+        and 'latencyProbeTimeout = pollingTimeout + 4 * requestTimeout' in today
+        and 'addingTimeInterval(TodayCompletionPolicy.pollingTimeout)' in today
+        and today.count('request.timeoutInterval = TodayCompletionPolicy.requestTimeout') == 2,
+    'Today never falls through to a second paid agent envelope':
+        'if latencyPolicy(for: entry).isToday || timedOut { return failure }' in source
+        and quick.index('?.providerType == .today') < quick.index('responseText = try await performAgentTextProbe'),
+    'submitted Today throttle cannot retry a generation; safe account cooldown remains':
+        'retryAllowed: !TodayProvider.generationMayHaveBeenSubmitted(error)' in source
+        and 'if probe.retryAllowed, !exhaustedAccounts.contains(providerId)' in source
+        and today.index('submitted = true') < today.index('let sent: TodaySendResponse')
+        and 'guard !(method == "POST" && path == "/v1/messages")' in today,
+    'Today client gate covers selection, POST, poll and cancellation across clients':
+        today.index('TodayAccountGate.shared.acquire(sessionCookie)') < today.index('try await selectModel(modelID)')
+        and today.count('await TodayAccountGate.shared.release(sessionCookie)') == 2
+        and 'Task { await self.cancel(account, id: id) }' in today,
+    'timeout is not a red failure, including legacy cached timeouts':
+        'else if state.result.isTimeout' in picker
+        and picker.index('else if state.result.isTimeout') < picker.index('} else if failed {')
+        and 'error == "first-token timeout"' in source
+        and 'Speed test timed out; model availability is unknown' in picker,
+    'only nonempty successful text Quick Tests clear errors without fake TTFT':
+        'if !text.isEmpty { ChatOptimizer.shared.recordSuccessfulTextQuickTest(entry: entry) }' in quick
+        and 'func recordSuccessfulTextQuickTest(entry: ModelEntry)' in source
+        and 'validationAtStart[id] == textValidationRevisions[id, default: 0]' in source,
     'task-group scheduler helpers explicitly retain main-actor isolation':
         'withTaskGroup(of: (String, String, LatencyProbe).self) { @MainActor group in' in source
         and '@MainActor func nextReady()' in source and '@MainActor func pump()' in source,
@@ -98,12 +141,21 @@ if not shutil.which('swiftc'):
 types = section('struct ModelLatencyCache:', '/// Errors surfaced by `ChatOptimizer`.')
 fields = section('    let latencyState: ModelLatencyState', '    private init()')
 cache = section('    private func readLatencyCache()', '    /// All entries that are usable:')
-probe = section('    func measureLatency(', '    private func performLatencyProbe(')
+probe = section('    private func latencyPolicy(', '    private func performLatencyProbe(')
+today_policy = 'enum TodayCompletionPolicy {' + today.split('enum TodayCompletionPolicy {', 1)[1].split('\n}', 1)[0] + '\n}\n'
 scheduler = section('    func speedTestInstance(', '    /// Compatibility signal')
 notifications = section('    static let latencyUpdatedNotification', '    /// Whether a probe failure means')
 throttle = section('    private static func isThrottle(', '    /// The fastest available entry per the latency cache')
 
-program = 'import Foundation\nimport Combine\n' + types + r'''
+program = 'import Foundation\nimport Combine\n' + today_policy + types + r'''
+enum ProviderType { case today, other }
+struct Instance { let providerType: ProviderType }
+@MainActor final class TestStore {
+    var todayAccounts: Set<String> = []
+    func instance(for id: String) -> Instance? {
+        Instance(providerType: todayAccounts.contains(id) ? .today : .other)
+    }
+}
 struct ModelEntry: Sendable { let id: String; let providerInstanceId: String }
 enum ChatOptimizerSettings { static let latencyCacheKey = "speedtest-regression" }
 struct TestLog { func info(_ text: String) {} }
@@ -111,6 +163,9 @@ struct TestLog { func info(_ text: String) {} }
 ''' + fields + r'''
     let userDefaults = UserDefaults(suiteName: UUID().uuidString)!
     let logger = TestLog()
+    let store = TestStore()
+    var noRetry: Set<String> = []
+    var maxByAccount: [String: Int] = [:]
     var automatic: [ModelEntry] = []
     var catalog: [ModelEntry] = []
     var failures: [String: String] = [:]
@@ -139,6 +194,8 @@ struct TestLog { func info(_ text: String) {} }
         activeByAccount[entry.providerInstanceId, default: 0] += 1
         maxActive = max(maxActive, realActive)
         maxAccount = max(maxAccount, activeByAccount[entry.providerInstanceId, default: 0])
+        maxByAccount[entry.providerInstanceId] = max(maxByAccount[entry.providerInstanceId, default: 0],
+                                                    activeByAccount[entry.providerInstanceId, default: 0])
         defer {
             realActive -= 1
             activeByAccount[entry.providerInstanceId, default: 0] -= 1
@@ -149,7 +206,9 @@ struct TestLog { func info(_ text: String) {} }
         } else {
             try? await Task.sleep(nanoseconds: delays[entry.id] ?? 3_000_000)
         }
-        if let error = failures[entry.id] { return LatencyProbe(seconds: nil, error: error) }
+        if let error = failures[entry.id] {
+            return LatencyProbe(seconds: nil, error: error, retryAllowed: !noRetry.contains(entry.id))
+        }
         return LatencyProbe(seconds: 0.3, error: nil)
     }
 ''' + cache + probe + scheduler + notifications + throttle + '\n}\n'
@@ -316,6 +375,38 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         assert(single.maxActive == 2 && single.maxAccount == 2)
         print("PASS: single-account concurrency cap")
 
+        // Eleven models on each Today account are serial, not globally serial:
+        // a second Today account and two ordinary-account slots still proceed.
+        let todayBatch = ChatOptimizer()
+        todayBatch.store.todayAccounts = ["today-A", "today-B"]
+        let todayA = (0..<11).map { ModelEntry(id: "ta\($0)", providerInstanceId: "today-A") }
+        let todayB = (0..<11).map { ModelEntry(id: "tb\($0)", providerInstanceId: "today-B") }
+        let ordinary = (0..<8).map { ModelEntry(id: "o\($0)", providerInstanceId: "ordinary") }
+        todayBatch.catalog = todayA + todayB + ordinary
+        await todayBatch.speedTestAll(sessionId: nil, includeAllAccounts: true)
+        assert(todayBatch.starts.count == 30 && todayBatch.starts.values.allSatisfy { $0 == 1 })
+        assert(todayBatch.maxByAccount["today-A"] == 1 && todayBatch.maxByAccount["today-B"] == 1)
+        assert(todayBatch.maxByAccount["ordinary"] == 2 && todayBatch.maxActive == 4)
+        assert(todayBatch.speedTestStatus.instances["today-A"]?.done == 11)
+        assert(todayBatch.latencyState.cache.entries.count == 30)
+        assert(TodayCompletionPolicy.pollingTimeout == 120 && TodayCompletionPolicy.requestTimeout == 30)
+        assert(LatencyProbePolicy(isToday: true).timeout == 240)
+        assert(LatencyProbePolicy(isToday: false).timeout == 12)
+        print("PASS: eleven-model Today accounts serial; different accounts/other providers retain four global slots")
+
+        // Real production deadline timers, not a Python timing approximation:
+        // a 15.9-second completion survives Today defaults but not ordinary TTFT.
+        let slowToday = ChatOptimizer()
+        slowToday.store.todayAccounts = ["today"]
+        slowToday.catalog = [ModelEntry(id: "today-slow", providerInstanceId: "today"),
+                             ModelEntry(id: "ordinary-slow", providerInstanceId: "ordinary")]
+        for entry in slowToday.catalog { slowToday.delays[entry.id] = 15_900_000_000 }
+        await slowToday.speedTestAll(sessionId: nil, includeAllAccounts: true)
+        assert(slowToday.latencyState.cache.entries["today-slow"] != nil)
+        assert(slowToday.latencyState.entry(id: "ordinary-slow").result.isTimeout)
+        assert(slowToday.latencyState.cache.unavailable.isEmpty)
+        print("PASS: simulated 15.9s completed reply survives Today-only default budget; others still expire at 12s")
+
         // Start automatic, then upgrade manually from two independent callers.
         // Both join the SAME run; hidden/disabled extra catalog entries are added.
         let joined = ChatOptimizer()
@@ -361,13 +452,64 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         assert(soft.latencyState.cache.entries["m0"] != nil && soft.latencyState.cache.errors["m0"] == nil)
         print("PASS: stale-success invalidation, soft failure and recovery")
 
+        // A successful TEXT smoke test clears only this entry's old failure.
+        // It must not turn Quick Test's full-response duration into a TTFT rank.
+        let verified = ChatOptimizer()
+        let verifiedEntry = ModelEntry(id: "verified", providerInstanceId: "today")
+        verified.catalog = [verifiedEntry]
+        verified.latencyState.cache.errors = ["verified": "first-token timeout", "other": "failure"]
+        verified.latencyState.cache.unavailable = ["verified"]
+        let verifiedLeaf = verified.latencyState.entry(id: "verified")
+        assert(verifiedLeaf.result.isTimeout)
+        verified.recordSuccessfulTextQuickTest(entry: verifiedEntry)
+        assert(verifiedLeaf.result.error == nil && verifiedLeaf.result.seconds == nil)
+        assert(verified.latencyState.cache.entries.isEmpty && verified.latencyState.cache.unavailable.isEmpty)
+        assert(verified.latencyState.cache.errors["other"] == "failure")
+        let verifiedDurable = try JSONDecoder().decode(ModelLatencyCache.self,
+            from: verified.userDefaults.data(forKey: ChatOptimizerSettings.latencyCacheKey)!)
+        assert(verifiedDurable.errors["verified"] == nil)
+        verified.latencyState.cache.entries["verified"] = 1.7
+        verified.recordSuccessfulTextQuickTest(entry: verifiedEntry)
+        assert(verifiedLeaf.result.seconds == 1.7)
+        verified.holdRequests = true
+        verified.failures["verified"] = "old failed probe"
+        let oldRun = Task { @MainActor in await verified.speedTestAll(sessionId: nil, includeAllAccounts: true) }
+        for _ in 0..<1000 { if verified.held.count == 1 { break }; await Task.yield() }
+        assert(verified.held.count == 1)
+        verified.recordSuccessfulTextQuickTest(entry: verifiedEntry)
+        assert(verifiedLeaf.result.phase == .running)
+        verified.releaseHeld()
+        await oldRun.value
+        assert(verifiedLeaf.result.error == nil && verifiedLeaf.result.seconds == 1.7)
+        verified.holdRequests = false
+        await verified.speedTestAll(sessionId: nil, includeAllAccounts: true)
+        assert(verifiedLeaf.result.error == "old failed probe" && verifiedLeaf.result.seconds == nil)
+        print("PASS: text Quick Test clears exact failure, persists, preserves measured TTFT and supersedes older probe failures only")
+
+        // A 429 while polling an already-submitted Today generation must exhaust
+        // that account, NOT issue a second paid POST. Other accounts finish.
+        let delivered = ChatOptimizer()
+        delivered.store.todayAccounts = ["today"]
+        delivered.catalog = (0..<11).map { ModelEntry(id: "paid\($0)", providerInstanceId: "today") }
+            + [ModelEntry(id: "healthy", providerInstanceId: "other")]
+        delivered.failures["paid0"] = "HTTP 429 rate limited"
+        delivered.noRetry = ["paid0"]
+        await delivered.speedTestAll(sessionId: nil, includeAllAccounts: true)
+        assert(delivered.starts["paid0"] == 1 && delivered.starts.count == 2)
+        assert(delivered.speedTestStatus.instances["today"]?.skipped == 11)
+        assert(delivered.latencyState.cache.errors.isEmpty)
+        assert(delivered.latencyState.cache.entries["healthy"] != nil)
+        print("PASS: delivered Today polling throttle never resends generation, skips account safely, other account completes")
+
         // Permanently rate-limited account is retried once after cooldown, then
         // skipped. The healthy account must finish BEFORE that cooldown ends.
         let throttled = ChatOptimizer()
         let bad = (0..<6).map { ModelEntry(id: "bad\($0)", providerInstanceId: "rate") }
         let good = (0..<4).map { ModelEntry(id: "good\($0)", providerInstanceId: "good") }
-        throttled.catalog = bad + good
-        for entry in bad { throttled.failures[entry.id] = "HTTP 429 rate limited" }
+        let safeToday = [ModelEntry(id: "safeToday0", providerInstanceId: "safe-today")]
+        throttled.store.todayAccounts = ["safe-today"]
+        throttled.catalog = bad + good + safeToday
+        for entry in bad + safeToday { throttled.failures[entry.id] = "HTTP 429 rate limited" }
         throttled.latencyState.cache.entries["bad0"] = 1.2
         var finalProgress = (0, 0)
         let throttleRun = Task { @MainActor in
@@ -380,7 +522,8 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         assert(throttled.maxAccount <= 2 && throttled.starts.values.allSatisfy { $0 <= 2 })
         assert(throttled.latencyState.cache.errors.isEmpty && throttled.latencyState.cache.unavailable.isEmpty)
         assert(throttled.latencyState.cache.entries["bad0"] == 1.2)
-        assert(finalProgress.0 == 10 && finalProgress.1 == 10 && throttled.speedTestStatus.skipped > 0)
+        assert(finalProgress.0 == 11 && finalProgress.1 == 11 && throttled.speedTestStatus.skipped > 0)
+        assert(throttled.maxByAccount["safe-today"] == 1 && throttled.starts["safeToday0"] == 2)
         print("PASS: account-scoped 429 cooldown/retry/skip, healthy account proceeds, progress terminates")
 
         // A stream opener that ignores cancellation MUST NOT hold the scheduler
@@ -404,6 +547,21 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         for _ in 0..<20 { await Task.yield() }
         assert(stuck.activeCount == 0 && stuck.latencyState.cache.entries.isEmpty)
         print("PASS: hard deadline without task join, retained account permits, no overlap/late-cache overwrite")
+
+        let todayStuck = ChatOptimizer()
+        todayStuck.store.todayAccounts = ["today"]
+        todayStuck.catalog = (0..<11).map { ModelEntry(id: "st\($0)", providerInstanceId: "today") }
+        todayStuck.holdRequests = true
+        await todayStuck.speedTestAll(sessionId: nil, perEntryTimeout: 0.02, includeAllAccounts: true)
+        assert(todayStuck.starts.count == 1 && todayStuck.activeCount == 1)
+        assert(todayStuck.speedTestStatus.skipped == 10)
+        assert(todayStuck.latencyState.entry(id: "st0").result.isTimeout)
+        await todayStuck.speedTestAll(sessionId: nil, perEntryTimeout: 0.02, includeAllAccounts: true)
+        assert(todayStuck.starts.count == 1 && todayStuck.speedTestStatus.skipped == 11)
+        todayStuck.releaseHeld()
+        for _ in 0..<100 { await Task.yield() }
+        assert(todayStuck.activeCount == 0 && todayStuck.latencyState.cache.entries.isEmpty)
+        print("PASS: Today explicit deadline override, retained single account permit and late-result rejection")
 
         // The same guarantee holds globally, across many different accounts.
         let globallyStuck = ChatOptimizer()
@@ -449,7 +607,7 @@ with tempfile.TemporaryDirectory(prefix='speedtest-regression-') as tmp:
     swift.write_text(program)
     subprocess.run(['swiftc', '-swift-version', '5', '-parse-as-library', str(swift), '-o', str(binary)],
                    check=True, timeout=90)
-    subprocess.run([str(binary)], check=True, timeout=45)
+    subprocess.run([str(binary)], check=True, timeout=90)
     from speedtest_probe_clock import run_probe_clock_test
     run_probe_clock_test(source, production_harness, Path(tmp))
     from speedtest_swiftui_host import run_swiftui_test

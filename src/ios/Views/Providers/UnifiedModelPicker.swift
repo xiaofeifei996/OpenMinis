@@ -1700,7 +1700,18 @@ struct UnifiedModelPicker: View {
                         .padding(.vertical, 1)
                         .background(Color(UIColor.tertiarySystemFill))
                         .clipShape(RoundedRectangle(cornerRadius: 3))
-                        .accessibilityLabel(Text("First-token latency: \(text)", tableName: "SpeedTest"))
+                        .accessibilityLabel(Text("Response latency: \(text)", tableName: "SpeedTest"))
+                } else if state.result.isTimeout {
+                    HStack(spacing: 2) {
+                        Image(systemName: "clock")
+                        Text("Timed out", tableName: "SpeedTest")
+                    }
+                    .font(.system(size: 9, weight: .medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .foregroundStyle(.orange)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(Text("Speed test timed out; model availability is unknown", tableName: "SpeedTest"))
                 } else if failed {
                     // A failed speed test remains a soft signal, not availability.
                     Image(systemName: "xmark.circle.fill")

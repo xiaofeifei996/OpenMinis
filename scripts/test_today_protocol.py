@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 
-EXPECTED_TESTS = 18
+EXPECTED_TESTS = 25
 
 
 def main():
@@ -143,6 +143,15 @@ FIXTURES = r'''// Appended after the exact provider bytes so file-private wire t
 private extension TodayClient {
     static func fixtureCookie(_ value: String) -> String { normalizeCookie(value) }
     func fixtureSelect(_ value: String) async throws { try await selectModel(value) }
+}
+
+private extension TodayAccountGate {
+    var fixtureWaitingCount: Int { waiting.values.reduce(0) { $0 + $1.count } }
+}
+private actor GateEvents {
+    private var events: [String] = []
+    func append(_ event: String) { events.append(event) }
+    func snapshot() -> [String] { events }
 }
 
 private struct FixtureFailure: Error, CustomStringConvertible {
@@ -460,7 +469,10 @@ private let history = #"""
             do {
                 _ = try await client.complete(messages: [.init(role: .user, content: "hello")], systemPrompt: nil, modelID: "mode.auto")
                 throw FixtureFailure("mismatched echoed ID accepted")
-            } catch TodayProviderError.invalidResponse(let detail) {
+            } catch TodayProviderError.generationSubmitted(let underlying) {
+                guard case TodayProviderError.invalidResponse(let detail) = underlying else {
+                    throw FixtureFailure("wrong submitted validation error")
+                }
                 try expect(detail.contains("clientMessageId"), "wrong validation failure")
             }
         }
@@ -478,8 +490,127 @@ private let history = #"""
             let client = TodayClient(sessionCookie: "YWJjZA==")
             try await client.fixtureSelect("custom.retry")
         }
+        await suite.run("generation POST 401 is never replayed") {
+            FixtureURLProtocol.install([tokenStep,
+                Step("PUT", "/api/cloud/v1/pricing/model-option"),
+                Step("POST", "/api/cloud/v1/messages", "{}", status: 401)])
+            do {
+                let client = TodayClient(sessionCookie: "YWJjZA==")
+                _ = try await client.complete(messages: [.init(role: .user, content: "hello")], systemPrompt: nil, modelID: "mode.auto")
+                throw FixtureFailure("expected POST rejection")
+            } catch TodayProviderError.generationSubmitted(let underlying) {
+                guard case TodayProviderError.http(401, _) = underlying else {
+                    throw FixtureFailure("wrong POST rejection")
+                }
+            }
+        }
+        await suite.run("polling 429 retains submitted marker for scheduler no-retry") {
+            FixtureURLProtocol.install([tokenStep,
+                Step("PUT", "/api/cloud/v1/pricing/model-option"),
+                Step("POST", "/api/cloud/v1/messages"),
+                Step("GET", "/api/cloud/v1/conversations/messages", "{}", status: 429)])
+            do {
+                let client = TodayClient(sessionCookie: "YWJjZA==")
+                _ = try await client.complete(messages: [.init(role: .user, content: "hello")], systemPrompt: nil, modelID: "mode.auto")
+                throw FixtureFailure("expected polling throttle")
+            } catch {
+                try expect(TodayProvider.generationMayHaveBeenSubmitted(error), "lost submitted boundary")
+                try expect(!TodayProvider.isCompletionTimeout(error), "429 is not a timeout")
+                try expect(error.localizedDescription.contains("429"), "lost throttle status")
+            }
+        }
+        await suite.run("Today and URL timeouts classify without guessing availability") {
+            let errors: [Error] = [TodayProviderError.timeout, URLError(.timedOut),
+                                  TodayProviderError.generationSubmitted(TodayProviderError.timeout)]
+            for error in errors {
+                try expect(TodayProvider.isCompletionTimeout(error), "timeout not classified")
+            }
+            try expect(!TodayProvider.isCompletionTimeout(TodayProviderError.emptyReply), "empty reply is not a timeout")
+            try expect(TodayCompletionPolicy.latencyProbeTimeout == 240, "completion budget changed")
+        }
+        await suite.run("pre-submit throttle is distinguishable and remains safe to retry") {
+            FixtureURLProtocol.install([tokenStep,
+                Step("PUT", "/api/cloud/v1/pricing/model-option", "{}", status: 429)])
+            do {
+                let client = TodayClient(sessionCookie: "YWJjZA==")
+                _ = try await client.complete(messages: [.init(role: .user, content: "hello")], systemPrompt: nil, modelID: "mode.auto")
+                throw FixtureFailure("expected selection throttle")
+            } catch TodayProviderError.http(429, _) {
+                // Reached only a rejected selection, never a generation POST.
+            }
+        }
+        await suite.run("account gate is FIFO and independent across accounts") {
+            let gate = TodayAccountGate()
+            let events = GateEvents()
+            try await gate.acquire("account-A")
+            let first = Task {
+                try await gate.acquire("account-A")
+                await events.append("first")
+                await gate.release("account-A")
+            }
+            for _ in 0..<1000 { if await gate.fixtureWaitingCount == 1 { break }; await Task.yield() }
+            let oneWaiting = await gate.fixtureWaitingCount
+            try expect(oneWaiting == 1, "same-account request did not queue")
+            let second = Task {
+                try await gate.acquire("account-A")
+                await events.append("second")
+                await gate.release("account-A")
+            }
+            for _ in 0..<1000 { if await gate.fixtureWaitingCount == 2 { break }; await Task.yield() }
+            let twoWaiting = await gate.fixtureWaitingCount
+            try expect(twoWaiting == 2, "second same-account request did not queue")
+            try await gate.acquire("account-B")
+            await events.append("independent")
+            await gate.release("account-B")
+            let before = await events.snapshot()
+            try expect(before == ["independent"], "same-account request escaped held lease")
+            await gate.release("account-A")
+            try await first.value
+            try await second.value
+            let after = await events.snapshot()
+            try expect(after == ["independent", "first", "second"], "FIFO or independent progress broken")
+        }
+        await suite.run("cancelled queued account lease stops promptly without leaking permit") {
+            let gate = TodayAccountGate()
+            try await gate.acquire("account")
+            let queued = Task { try await gate.acquire("account") }
+            for _ in 0..<1000 { if await gate.fixtureWaitingCount == 1 { break }; await Task.yield() }
+            let waiting = await gate.fixtureWaitingCount
+            try expect(waiting == 1, "request not queued before cancellation")
+            queued.cancel()
+            do { try await queued.value; throw FixtureFailure("cancelled waiter acquired lease") }
+            catch is CancellationError {}
+            let remaining = await gate.fixtureWaitingCount
+            try expect(remaining == 0, "cancelled waiter retained")
+            await gate.release("account")
+            try await gate.acquire("account")
+            await gate.release("account")
+        }
+        await suite.run("stream waits for completed polling reply rather than partial text") {
+            var sentID = ""
+            FixtureURLProtocol.install([tokenStep,
+                Step("PUT", "/api/cloud/v1/pricing/model-option"),
+                Step("POST", "/api/cloud/v1/messages", reply: { request in
+                    sentID = try body(request)["clientMessageId"] as? String ?? ""
+                    return "{}"
+                }),
+                Step("GET", "/api/cloud/v1/conversations/messages", reply: { _ in
+                    history.replacingOccurrences(of: "CURRENT", with: sentID)
+                        .replacingOccurrences(of: "COMPLETED", with: "in_progress")
+                }),
+                Step("GET", "/api/cloud/v1/conversations/messages", reply: { _ in
+                    history.replacingOccurrences(of: "CURRENT", with: sentID)
+                })])
+            let provider = TodayProvider(sessionCookie: "YWJjZA==",
+                model: .init(id: "mode.auto", displayName: "Auto", provider: "Today AI"))
+            let stream = try await provider.streamMessage(messages: [.init(role: .user, content: "hello")],
+                systemPrompt: nil, maxTokens: 256, temperature: 0)
+            var texts: [String] = []
+            for try await chunk in stream { if case .text(let text) = chunk { texts.append(text) } }
+            try expect(texts == ["correct answer"], "partial text escaped or final text was duplicated")
+        }
         print("TODAY_FIXTURES passed=\(suite.passed) failed=\(suite.failed)")
-        exit(suite.failed == 0 && suite.passed == 18 ? 0 : 1)
+        exit(suite.failed == 0 && suite.passed == 25 ? 0 : 1)
     }
 }
 '''

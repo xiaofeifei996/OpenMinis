@@ -5,6 +5,7 @@ and agent-fallback measurements, including provider creation and empty deltas.
 The streams deliberately never send EOF: the first text must finish the test.
 """
 import subprocess
+from pathlib import Path
 
 
 def run_probe_clock_test(source, harness, tmp):
@@ -17,6 +18,10 @@ def run_probe_clock_test(source, harness, tmp):
     program = program.replace('struct TestLog { func info(_ text: String) {} }',
                               'struct TestLog { func info(_ text: String) {}\n'
                               'func warning(_ text: String) {} }')
+    today = (Path(__file__).resolve().parents[1] / 'src/ios/Providers/TodayProvider.swift').read_text()
+    errors = today[today.index('private enum TodayProviderError:'):today.index('/// Covers ALL Today clients')]
+    classifiers = today[today.index('    static func generationMayHaveBeenSubmitted('):today.index('    /// Account-scoped model discovery')]
+    program += errors + '\nenum TodayProvider {\n' + classifiers + '\n}\n'
     program += r'''
 enum Role { case user }
 struct LLMMessage { let role: Role; let content: String }
@@ -29,6 +34,7 @@ enum OpenCodeChannel { static func oneOffSessionId() -> String { "clock-test" } 
 struct EnvelopeError: LocalizedError { var errorDescription: String? { "unsupported envelope" } }
 @MainActor enum ProbeNetwork {
     static var failPlain = false
+    static var plainError: Error = EnvelopeError()
     static var agentCalls = 0
     static var tokenAt: Date?
     static func stream<T: Sendable>(_ empty: T, _ token: T) -> AsyncThrowingStream<T, Error> {
@@ -49,7 +55,7 @@ struct EnvelopeError: LocalizedError { var errorDescription: String? { "unsuppor
                        temperature: Double) async throws -> AsyncThrowingStream<LLMStreamChunk, Error> {
         if ProbeNetwork.failPlain {
             try await Task.sleep(nanoseconds: 80_000_000)
-            throw EnvelopeError()
+            throw ProbeNetwork.plainError
         }
         return ProbeNetwork.stream(.text(""), .text("hi"))
     }
@@ -99,6 +105,24 @@ struct EnvelopeError: LocalizedError { var errorDescription: String? { "unsuppor
             withExtendedLifetime(subscription) {}
             print("PASS: unchanged production \(fallback ? "fallback" : "plain") probe starts at dispatch, includes setup/empty deltas, returns at first text without EOF (\(measured)s)")
         }
+        let cases: [(Bool, Error, Bool, Bool)] = [
+            (false, URLError(.timedOut), true, true),
+            (true, EnvelopeError(), false, true),
+            (true, TodayProviderError.generationSubmitted(TodayProviderError.http(429, "rate limited")), false, false),
+            (true, TodayProviderError.generationSubmitted(TodayProviderError.timeout), true, false)
+        ]
+        for (today, error, timedOut, retryAllowed) in cases {
+            ProbeNetwork.failPlain = true
+            ProbeNetwork.plainError = error
+            ProbeNetwork.agentCalls = 0
+            let optimizer = ChatOptimizer()
+            if today { optimizer.store.todayAccounts = ["A"] }
+            let entry = ModelEntry(id: "no-replay", providerInstanceId: "A")
+            let result = await optimizer.measureLatency(entry: entry, sessionId: nil, timeout: 2)
+            assert(result.seconds == nil && result.isTimeout == timedOut)
+            assert(result.retryAllowed == retryAllowed && ProbeNetwork.agentCalls == 0)
+        }
+        print("PASS: unchanged production probe and Today classifiers distinguish timeouts/submitted 429s without agent replay")
     }
 }
 '''

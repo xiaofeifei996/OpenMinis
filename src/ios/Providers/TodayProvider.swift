@@ -1,5 +1,14 @@
 import Foundation
 
+/// Today returns a completed reply, not first-token deltas. A fresh request can
+/// spend 30s each on token exchange, selection and send, then poll for 120s;
+/// allow one last 30s poll HTTP request. Other providers keep their own budgets.
+enum TodayCompletionPolicy {
+    static let requestTimeout: TimeInterval = 30
+    static let pollingTimeout: TimeInterval = 120
+    static let latencyProbeTimeout = pollingTimeout + 4 * requestTimeout
+}
+
 /// Today AI (todayai.cn) native provider.
 ///
 /// Today is not an OpenAI-compatible endpoint.  The web service exchanges the
@@ -63,6 +72,21 @@ final class TodayProvider: LLMProvider {
         }
     }
 
+    /// Once POST /messages has been attempted, an error (even a polling 429 or
+    /// timeout) is not permission to submit a second billable generation.
+    static func generationMayHaveBeenSubmitted(_ error: Error) -> Bool {
+        if case TodayProviderError.generationSubmitted = error { return true }
+        return false
+    }
+
+    static func isCompletionTimeout(_ error: Error) -> Bool {
+        if case TodayProviderError.timeout = error { return true }
+        if case TodayProviderError.generationSubmitted(let underlying) = error {
+            return isCompletionTimeout(underlying)
+        }
+        return (error as? URLError)?.code == .timedOut
+    }
+
     /// Account-scoped model discovery used by ProviderConfigStore.
     static func fetchModels(sessionCookie: String) async throws -> [LLMModel] {
         let client = TodayClient(sessionCookie: sessionCookie)
@@ -76,6 +100,7 @@ private enum TodayProviderError: LocalizedError {
     case http(Int, String)
     case emptyReply
     case timeout
+    case generationSubmitted(Error)
 
     var errorDescription: String? {
         switch self {
@@ -89,6 +114,54 @@ private enum TodayProviderError: LocalizedError {
             return "Today AI returned an empty reply."
         case .timeout:
             return "Today AI did not finish the request in time."
+        case .generationSubmitted(let underlying):
+            return underlying.localizedDescription
+        }
+    }
+}
+
+/// Covers ALL Today clients (Quick Test/chat/probes), not just one batch. The
+/// normalized cookie is an in-memory key only: never logged or persisted here.
+/// Cancellation stops local waiting; it cannot promise to stop remote billing.
+private actor TodayAccountGate {
+    static let shared = TodayAccountGate()
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, Error>
+    }
+    private var held: Set<String> = []
+    private var waiting: [String: [Waiter]] = [:]
+
+    func acquire(_ account: String) async throws {
+        try Task.checkCancellation()
+        if held.insert(account).inserted { return }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled { continuation.resume(throwing: CancellationError()) }
+                else { waiting[account, default: []].append(Waiter(id: id, continuation: continuation)) }
+            }
+        } onCancel: {
+            Task { await self.cancel(account, id: id) }
+        }
+        // The caller owns the permit after resume, even if just cancelled;
+        // it must release it in its cancellation/error path.
+    }
+
+    private func cancel(_ account: String, id: UUID) {
+        guard let index = waiting[account]?.firstIndex(where: { $0.id == id }),
+              let waiter = waiting[account]?.remove(at: index) else { return }
+        if waiting[account]?.isEmpty == true { waiting.removeValue(forKey: account) }
+        waiter.continuation.resume(throwing: CancellationError())
+    }
+
+    func release(_ account: String) {
+        if let waiter = waiting[account]?.first {
+            waiting[account]?.removeFirst()
+            if waiting[account]?.isEmpty == true { waiting.removeValue(forKey: account) }
+            waiter.continuation.resume()
+        } else {
+            held.remove(account)
         }
     }
 }
@@ -141,19 +214,33 @@ private actor TodayClient {
         guard text.count <= 1_000_000 else {
             throw TodayProviderError.invalidResponse("conversation context exceeds Today text limit")
         }
-        try await selectModel(modelID)
-        try Task.checkCancellation()
-        let clientMessageID = UUID().uuidString
-        let sent: TodaySendResponse = try await requestJSON(
-            method: "POST",
-            path: "/v1/messages",
-            body: TodaySendRequest(text: text, clientMessageID: clientMessageID)
-        )
-        try Task.checkCancellation()
-        if let echoedID = sent.clientMessageID, echoedID != clientMessageID {
-            throw TodayProviderError.invalidResponse("messages response clientMessageId mismatch")
+        try await TodayAccountGate.shared.acquire(sessionCookie)
+        var submitted = false
+        do {
+            try Task.checkCancellation()
+            try await selectModel(modelID)
+            try Task.checkCancellation()
+            let clientMessageID = UUID().uuidString
+            // Set BEFORE the await: a lost POST response may still be billable.
+            submitted = true
+            let sent: TodaySendResponse = try await requestJSON(
+                method: "POST",
+                path: "/v1/messages",
+                body: TodaySendRequest(text: text, clientMessageID: clientMessageID)
+            )
+            try Task.checkCancellation()
+            if let echoedID = sent.clientMessageID, echoedID != clientMessageID {
+                throw TodayProviderError.invalidResponse("messages response clientMessageId mismatch")
+            }
+            let reply = try await pollReply(clientMessageID: clientMessageID, conversationID: sent.conversationID)
+            await TodayAccountGate.shared.release(sessionCookie)
+            return reply
+        } catch {
+            await TodayAccountGate.shared.release(sessionCookie)
+            if Task.isCancelled || error is CancellationError { throw CancellationError() }
+            if submitted { throw TodayProviderError.generationSubmitted(error) }
+            throw error
         }
-        return try await pollReply(clientMessageID: clientMessageID, conversationID: sent.conversationID)
     }
 
     private func selectModel(_ modelID: String) async throws {
@@ -170,7 +257,7 @@ private actor TodayClient {
     }
 
     private func pollReply(clientMessageID: String, conversationID: String?) async throws -> String {
-        let deadline = Date().addingTimeInterval(120)
+        let deadline = Date().addingTimeInterval(TodayCompletionPolicy.pollingTimeout)
         var interval: UInt64 = 250_000_000
         while Date() < deadline {
             try Task.checkCancellation()
@@ -230,7 +317,7 @@ private actor TodayClient {
         try Task.checkCancellation()
         var request = URLRequest(url: Self.apiURL(path: path))
         request.httpMethod = method
-        request.timeoutInterval = 30
+        request.timeoutInterval = TodayCompletionPolicy.requestTimeout
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -244,6 +331,11 @@ private actor TodayClient {
         if http.statusCode == 401 {
             accessToken = ""
             tokenExpiresAt = .distantPast
+            // Refresh/retry reads and idempotent selection only. Never replay
+            // a generation POST, whose delivery/billing may be uncertain.
+            guard !(method == "POST" && path == "/v1/messages") else {
+                throw TodayProviderError.http(http.statusCode, Self.snippet(data))
+            }
             let retryToken = try await validToken()
             try Task.checkCancellation()
             request.setValue("Bearer \(retryToken)", forHTTPHeaderField: "Authorization")
@@ -269,7 +361,7 @@ private actor TodayClient {
         guard !sessionCookie.isEmpty else { throw TodayProviderError.missingCookie }
         var request = URLRequest(url: URL(string: TodayAPI.appBase + "/api/token")!)
         request.httpMethod = "POST"
-        request.timeoutInterval = 30
+        request.timeoutInterval = TodayCompletionPolicy.requestTimeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(sessionCookie, forHTTPHeaderField: "Cookie")
         request.setValue(TodayAPI.appBase, forHTTPHeaderField: "Origin")

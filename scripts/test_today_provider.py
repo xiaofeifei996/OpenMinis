@@ -128,6 +128,22 @@ class TodayWiringTests(unittest.TestCase):
         detail = read("Views/Providers/ProviderInstanceDetailView.swift")
         self.assertIn("if instance.providerType != .today {\n                customBaseURLSection(instance)", detail)
 
+    def test_quota_descriptor_has_independent_today_kind(self):
+        source = read("Providers/Quota/QuotaAdapters.swift")
+        kinds = source.split("enum ProviderKind:", 1)[1].split("}", 1)[0]
+        self.assertRegex(kinds, r"\btoday\b")
+        detector = source.split("switch d.providerKind", 1)[1].split("static func vendor(forHost", 1)[0]
+        self.assertRegex(detector, r"case[^:]+\.today[^:]*:\s*return \.unknown")
+
+    def test_today_credential_help_precedes_api_key_wildcard(self):
+        source = read("Views/Providers/AddProviderView.swift")
+        help_body = source.split("private func credentialDescription(", 1)[1].split("@ViewBuilder", 1)[0]
+        self.assertEqual(help_body.count("case (.today, .apiKey):"), 1)
+        self.assertEqual(help_body.count("case (.today, .oauth):"), 1)
+        self.assertLess(help_body.index("case (.today, .apiKey):"), help_body.index("case (_, .apiKey):"))
+        cookie = help_body.split("case (.today, .apiKey):", 1)[1].split("case ", 1)[0]
+        self.assertIn(COOKIE_HELP, cookie)
+
     def test_shared_main_chat_and_cancellation_warning_is_visible(self):
         for relative in ["Views/Providers/AddProviderView.swift", "Views/Providers/ProviderInstanceDetailView.swift"]:
             source = read(relative)

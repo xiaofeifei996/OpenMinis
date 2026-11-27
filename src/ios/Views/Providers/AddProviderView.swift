@@ -1503,6 +1503,10 @@ struct AddProviderView: View {
             return "粘贴 Trae 客户端的 Cloud-IDE-JWT。"
         case (.traeInternational, .apiKey):
             return "粘贴 Trae 国际版客户端的 Cloud-IDE-JWT。"
+        case (.today, .apiKey):
+            return AppLocalized("Paste the __Secure-better-auth.session_token cookie from your signed-in todayai.cn session. It is stored securely in the iOS Keychain.")
+        case (.today, .oauth):
+            return "" // Cookie-only; not reachable from the credential selector.
         case (_, .apiKey):
             return AppLocalized("Use an API key from your \(type.displayName) account")
         case (.anthropic, .oauth):
@@ -1529,8 +1533,6 @@ struct AddProviderView: View {
             return "打开 WorkBuddy AI 登录（国际版，需对应区域账号）"
         case (.workBuddyChina, .apiKey):
             return AppLocalized("WorkBuddy China requires an account access token and account headers.")
-        case (.today, .apiKey):
-            return AppLocalized("Paste the __Secure-better-auth.session_token cookie from your signed-in todayai.cn session. It is stored securely in the iOS Keychain.")
         case (.githubCopilot, _):
             // [T-copilot-provider] The risk warning belongs where the user
             // decides, not only inside the sign-in sheet.

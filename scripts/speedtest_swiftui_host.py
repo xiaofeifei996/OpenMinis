@@ -35,7 +35,7 @@ def run_swiftui_test(harness, picker, tmp):
 
 // CI does not enable the process-wide accessibility tree. Inspect pixels from
 // the actual mounted NSHostingView instead, with Vision text recognition.
-@MainActor func rendered(_ window: NSWindow) throws -> (String, Int, NSBitmapImageRep) {
+@MainActor func rendered(_ window: NSWindow) throws -> (String, Int, Int, NSBitmapImageRep) {
     let host = window.contentView!
     host.layoutSubtreeIfNeeded()
     window.displayIfNeeded()
@@ -44,22 +44,41 @@ def run_swiftui_test(harness, picker, tmp):
         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 32)!
     rep.size = host.bounds.size
     host.cacheDisplay(in: host.bounds, to: rep)
+    // Vision misses small, light orange glyphs on white in otherwise correct
+    // rendered timeout badges. Darken saturated ink ONLY in an OCR copy; the
+    // original screenshot and raw red/orange pixel assertions stay untouched.
+    let recognition = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: rep.pixelsWide,
+        pixelsHigh: rep.pixelsHigh, bitsPerSample: 8, samplesPerPixel: 4,
+        hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+        bytesPerRow: rep.bytesPerRow, bitsPerPixel: 32)!
+    recognition.bitmapData!.update(from: rep.bitmapData!, count: rep.bytesPerRow * rep.pixelsHigh)
+    let ink = recognition.bitmapData!
+    for y in 0..<rep.pixelsHigh {
+        for x in 0..<rep.pixelsWide {
+            let offset = y * rep.bytesPerRow + x * 4
+            let gray = min(ink[offset], min(ink[offset + 1], ink[offset + 2]))
+            ink[offset] = gray; ink[offset + 1] = gray; ink[offset + 2] = gray
+        }
+    }
     let request = VNRecognizeTextRequest()
     request.recognitionLevel = .accurate
     request.usesLanguageCorrection = false
     request.minimumTextHeight = 0
-    try VNImageRequestHandler(cgImage: rep.cgImage!, options: [:]).perform([request])
+    try VNImageRequestHandler(cgImage: recognition.cgImage!, options: [:]).perform([request])
     let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
         .joined(separator: " ").lowercased().filter { !$0.isWhitespace }
     let data = rep.bitmapData!
     var red = 0
+    var orange = 0
     for y in stride(from: 0, to: rep.pixelsHigh, by: 2) {
         for x in stride(from: rep.pixelsWide - 300, to: rep.pixelsWide, by: 2) {
             let offset = y * rep.bytesPerRow + x * 4
             if data[offset] > 160 && data[offset + 1] < 100 && data[offset + 2] < 150 { red += 1 }
+            if data[offset] > 180 && data[offset + 1] >= 100 && data[offset + 1] < 220
+                && data[offset + 2] < 120 { orange += 1 }
         }
     }
-    return (text, red, rep)
+    return (text, red, orange, rep)
 }
 @MainActor func save(_ rep: NSBitmapImageRep, name: String) throws {
     let directory = URL(fileURLWithPath: "build/speedtest-ui", isDirectory: true)
@@ -80,17 +99,18 @@ def run_swiftui_test(harness, picker, tmp):
                        timedOut: Bool = false, name: String) async throws {
     var last = ""
     for _ in 0..<60 {
-        let (text, red, rep) = try rendered(window)
-        last = "OCR=\(text), red=\(red)"
+        let (text, red, orange, rep) = try rendered(window)
+        last = "OCR=\(text), red=\(red), orange=\(orange)"
         if text.contains("fast"), text.contains("0.3") == latency,
-           text.contains("timedout") == timedOut, (red > 3) == failed {
+           text.contains("timedout") == timedOut, (red > 3) == failed,
+           (orange > 3) == timedOut {
             try save(rep, name: name)
             return
         }
         try save(rep, name: "last-failure")
         try await Task.sleep(nanoseconds: 50_000_000)
     }
-    fatalError("SwiftUI List did not render latency=\(latency), failed=\(failed): \(last)")
+    fatalError("SwiftUI List state=\(name) did not render latency=\(latency), failed=\(failed), timedOut=\(timedOut): \(last)")
 }
 @main struct SwiftUIRegression {
     @MainActor static func main() async throws {

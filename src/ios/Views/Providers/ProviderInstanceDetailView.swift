@@ -12,6 +12,7 @@ struct ProviderInstanceDetailView: View {
     /// [T-copilot-provider] Same device-code shape as Kimi's.
     @State private var showCopilotLogin = false
     @State private var showAutoClawLogin = false
+    @State private var showTodayWebLogin = false
     @State private var keyInputText = ""
     @State private var isFetchingModels = false
     /// [T-thinking-rules-ui-fix] Owned HERE, not inside ThinkingRulesSection: a .sheet on a
@@ -123,6 +124,19 @@ struct ProviderInstanceDetailView: View {
                     if success, instance.providerType.oauthSupportsModelDiscovery {
                         Task { await store.refreshModels(for: instance) }
                     }
+                }
+            }
+        }
+        .sheet(isPresented: $showTodayWebLogin) {
+            if let instance = instance, instance.providerType == .today {
+                TodayWebLoginSheet { cookie in
+                    guard !cookie.isEmpty,
+                          !cookie.contains("\r"),
+                          !cookie.contains("\n") else { return }
+                    ProviderKeychainHelper.saveAPIKey(cookie, instanceId: instance.id)
+                    keyInputText = cookie
+                    oauthRefreshTrigger.toggle()
+                    Task { await store.refreshModels(for: instance) }
                 }
             }
         }
@@ -252,6 +266,18 @@ struct ProviderInstanceDetailView: View {
                     Text(instance.credentialType == .apiKey
                          ? "API key is stored securely in the iOS Keychain."
                          : "OAuth tokens are stored per-instance in the iOS Keychain.")
+                }
+            }
+
+            if instance.providerType == .today {
+                Section {
+                    Button {
+                        showTodayWebLogin = true
+                    } label: {
+                        Label(AppLocalized("Sign in with Today AI"), systemImage: "safari")
+                    }
+                } footer: {
+                    Text(AppLocalized("Sign in on the official Today AI page. Enter your phone number and verification code there; Minis does not collect them."))
                 }
             }
 
@@ -551,16 +577,22 @@ struct ProviderInstanceDetailView: View {
             }
             .font(.system(.body, design: .monospaced))
             .onAppear {
-                AppLogger(category: "Provider").info("apiKeyTextField onAppear instanceId=\(instance.id.prefix(8)) rawKeyHit=\(rawKey != nil) rawKeyLen=\(rawKey?.count ?? 0) prevTextLen=\(keyInputText.count)")
+                if instance.providerType != .today {
+                    AppLogger(category: "Provider").info("apiKeyTextField onAppear instanceId=\(instance.id.prefix(8)) rawKeyHit=\(rawKey != nil) rawKeyLen=\(rawKey?.count ?? 0) prevTextLen=\(keyInputText.count)")
+                }
                 keyInputText = rawKey ?? ""
             }
             .onChange(of: keyInputText) { newValue in
                 let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
                 if trimmed.isEmpty {
-                    AppLogger(category: "Provider").warning("apiKeyTextField onChange→DELETE instanceId=\(instance.id.prefix(8)) prevRawKeyHit=\(rawKey != nil) prevRawKeyLen=\(rawKey?.count ?? 0) newLen=\(newValue.count)")
+                    if instance.providerType != .today {
+                        AppLogger(category: "Provider").warning("apiKeyTextField onChange→DELETE instanceId=\(instance.id.prefix(8)) prevRawKeyHit=\(rawKey != nil) prevRawKeyLen=\(rawKey?.count ?? 0) newLen=\(newValue.count)")
+                    }
                     ProviderKeychainHelper.deleteAPIKey(instanceId: instance.id)
                 } else {
-                    AppLogger(category: "Provider").info("apiKeyTextField onChange→SAVE instanceId=\(instance.id.prefix(8)) newLen=\(trimmed.count)")
+                    if instance.providerType != .today {
+                        AppLogger(category: "Provider").info("apiKeyTextField onChange→SAVE instanceId=\(instance.id.prefix(8)) newLen=\(trimmed.count)")
+                    }
                     ProviderKeychainHelper.saveAPIKey(trimmed, instanceId: instance.id)
                 }
             }

@@ -246,6 +246,8 @@
 		E5D00020 /* ProviderInstancesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D00030 /* ProviderInstancesView.swift */; };
 		E5D00021 /* ProviderInstanceDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D00031 /* ProviderInstanceDetailView.swift */; };
 		E5D00022 /* AddProviderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D00032 /* AddProviderView.swift */; };
+		A77E00000000000000000001 /* TodayWebLoginSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A77E00000000000000000003 /* TodayWebLoginSheet.swift */; };
+		A77E00000000000000000002 /* TodayWebLoginPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A77E00000000000000000004 /* TodayWebLoginPolicy.swift */; };
 		E5D00023 /* ModelGroupsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D00033 /* ModelGroupsView.swift */; };
 		E5D00024 /* ModelGroupDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D00034 /* ModelGroupDetailView.swift */; };
 		E5D00025 /* SessionModelPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D00035 /* SessionModelPicker.swift */; };
@@ -1036,6 +1038,8 @@
 		E5D00030 /* ProviderInstancesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderInstancesView.swift; sourceTree = "<group>"; };
 		E5D00031 /* ProviderInstanceDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderInstanceDetailView.swift; sourceTree = "<group>"; };
 		E5D00032 /* AddProviderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddProviderView.swift; sourceTree = "<group>"; };
+		A77E00000000000000000003 /* TodayWebLoginSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayWebLoginSheet.swift; sourceTree = "<group>"; };
+		A77E00000000000000000004 /* TodayWebLoginPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayWebLoginPolicy.swift; sourceTree = "<group>"; };
 		E5D00033 /* ModelGroupsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelGroupsView.swift; sourceTree = "<group>"; };
 		E5D00034 /* ModelGroupDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelGroupDetailView.swift; sourceTree = "<group>"; };
 		E5D00035 /* SessionModelPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionModelPicker.swift; sourceTree = "<group>"; };
@@ -1789,6 +1793,7 @@
 				E52000013 /* LLMProvider.swift */,
 				E5F00002 /* LLMProviderFactory.swift */,
 				D0A0B0C0D0E0F01500000002 /* TodayProvider.swift */,
+				A77E00000000000000000004 /* TodayWebLoginPolicy.swift */,
 				E59000011 /* AgentProvider.swift */,
 				E5D00011 /* ProviderTypes.swift */,
 				E5D00012 /* ProviderInstance.swift */,
@@ -2672,6 +2677,7 @@
 			isa = PBXGroup;
 			children = (
 				E5D00032 /* AddProviderView.swift */,
+				A77E00000000000000000003 /* TodayWebLoginSheet.swift */,
 				E5KIMIUI2 /* KimiDeviceLoginSheet.swift */,
 				D0A0B0C0D0E0F00700000002 /* AutoClawLoginSheet.swift */,
 				E5D00038 /* AgentLoopModelsView.swift */,
@@ -3230,6 +3236,7 @@
 				E52000003 /* LLMProvider.swift in Sources */,
 				E5F00001 /* LLMProviderFactory.swift in Sources */,
 				D0A0B0C0D0E0F01500000001 /* TodayProvider.swift in Sources */,
+				A77E00000000000000000002 /* TodayWebLoginPolicy.swift in Sources */,
 				E52000004 /* AnthropicProvider.swift in Sources */,
 				E52000006 /* OAuthHTTPClient.swift in Sources */,
 				E52000007 /* ClaudeOAuthManager.swift in Sources */,
@@ -3532,6 +3539,7 @@
 				E5TRE001 /* ThinkingRuleEditorView.swift in Sources */,
 				E5SVP0021 /* ShadowVoiceProviderDetailView.swift in Sources */,
 				E5D00022 /* AddProviderView.swift in Sources */,
+				A77E00000000000000000001 /* TodayWebLoginSheet.swift in Sources */,
 				E5KIMIUI1 /* KimiDeviceLoginSheet.swift in Sources */,
 				E5D00023 /* ModelGroupsView.swift in Sources */,
 				E5D000F1 /* SwipeEditDestination.swift in Sources */,

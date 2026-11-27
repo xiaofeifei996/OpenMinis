@@ -180,6 +180,7 @@ struct AddProviderView: View {
     /// [T-copilot-provider] Same device-code shape as Kimi's.
     @State private var showCopilotLogin = false
     @State private var showAutoClawLogin = false
+    @State private var showTodayWebLogin = false
     @State private var oauthAuthTime: Date?
     @State private var showDataSharingConsent = false
     @State private var showImportFile = false
@@ -373,6 +374,11 @@ struct AddProviderView: View {
                     oauthMaskedToken = loadMaskedToken(type: .githubCopilot)
                     pendingOAuthDone = true
                 }
+            }
+        }
+        .sheet(isPresented: $showTodayWebLogin) {
+            TodayWebLoginSheet { cookie in
+                saveTodayLoginCookie(cookie)
             }
         }
         .fileImporter(isPresented: $showImportFile, allowedContentTypes: [.json]) { result in
@@ -760,6 +766,18 @@ struct AddProviderView: View {
 
     private var apiKeySection: some View {
         Group {
+            if selectedType == .today {
+                Section {
+                    Button {
+                        showTodayWebLogin = true
+                    } label: {
+                        Label(AppLocalized("Sign in with Today AI"), systemImage: "safari")
+                    }
+                } footer: {
+                    Text(AppLocalized("Sign in on the official Today AI page. Enter your phone number and verification code there; Minis does not collect them."))
+                }
+            }
+
             Section {
                     HStack {
                         if showApiKeyPlaintext {
@@ -1030,6 +1048,25 @@ struct AddProviderView: View {
     }
 
     // MARK: - Actions
+
+    @MainActor
+    private func saveTodayLoginCookie(_ cookie: String) {
+        guard selectedType == .today,
+              !cookie.isEmpty,
+              !cookie.contains("\r"),
+              !cookie.contains("\n") else { return }
+        let trimmedLabel = labelInput.trimmingCharacters(in: .whitespaces)
+        let instance = ProviderInstance(
+            id: pendingInstanceId,
+            label: trimmedLabel.isEmpty ? defaultLabel(for: .today) : trimmedLabel,
+            providerType: .today,
+            credentialType: .apiKey
+        )
+        ProviderKeychainHelper.saveAPIKey(cookie, instanceId: instance.id)
+        store.addInstance(instance)
+        apiKeyInput = ""
+        dismiss()
+    }
 
     private func saveApiKeyInstance() {
         guard let type = selectedType else { return }

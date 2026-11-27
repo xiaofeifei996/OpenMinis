@@ -395,6 +395,7 @@ private let history = #"""
                     let json = try body(request)
                     try expect(json["optionId"] as? String == expected, "model option prefix changed")
                     try expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-token", "missing API bearer")
+                    return "{}"
                 })
             }
             FixtureURLProtocol.install(steps)
@@ -421,6 +422,7 @@ private let history = #"""
                 Step("PUT", "/api/cloud/v1/pricing/model-option") { request in
                     let json = try body(request)
                     try expect(json["optionId"] as? String == "mode.auto", "mode selection changed")
+                    return "{}"
                 },
                 Step("POST", "/api/cloud/v1/messages", reply: { request in
                     let json = try body(request)
@@ -470,6 +472,7 @@ private let history = #"""
                     try expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer refreshed", "retry reused expired token")
                     let json = try body(request)
                     try expect(json["optionId"] as? String == "custom.retry", "retry changed model option")
+                    return "{}"
                 }
             ])
             let client = TodayClient(sessionCookie: "YWJjZA==")

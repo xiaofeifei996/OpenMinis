@@ -193,16 +193,17 @@ class TodayWiringTests(unittest.TestCase):
         checked, missing = 0, []
         # Application Swift only; independent standalone test fixtures define
         # their own reduced ProviderType enums and are intentionally excluded.
-        for directory in ["Providers", "Views/Providers", "Agent/Chat", "Debug", "NativeOffloads"]:
-            for path in (IOS / directory).rglob("*.swift"):
-                source = path.read_text()
-                if not all("." + case in source for case in ["openAI", "anthropic", "gemini"]):
-                    continue
-                for line, labels, has_default in switches(source):
-                    if {"openAI", "anthropic", "gemini"}.issubset(labels):
-                        checked += 1
-                        if not has_default and "today" not in labels:
-                            missing.append(str(path.relative_to(ROOT)) + ":" + str(line))
+        for path in IOS.rglob("*.swift"):
+            if "MinisTests" in path.parts:
+                continue
+            source = path.read_text()
+            if not all("." + case in source for case in ["openAI", "anthropic", "gemini"]):
+                continue
+            for line, labels, has_default in switches(source):
+                if {"openAI", "anthropic", "gemini"}.issubset(labels):
+                    checked += 1
+                    if not has_default and "today" not in labels:
+                        missing.append(str(path.relative_to(ROOT)) + ":" + str(line))
         self.assertGreaterEqual(checked, 20)
         self.assertEqual(missing, [], "ProviderType switches missing .today: " + ", ".join(missing))
         print("\nChecked", checked, "provider-shaped switches for Today coverage")

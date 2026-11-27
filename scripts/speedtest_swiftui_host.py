@@ -33,6 +33,35 @@ def run_swiftui_test(harness, picker, tmp):
     }
 }
 
+// Classify hue rather than absolute green brightness: antialiased red ink
+// blended with white has green > 100 too, but is still red, not orange.
+// Requiring chroma rejects gray labels/backgrounds; the hue gap makes the
+// two assertions mutually exclusive without relaxing timeout verification.
+func badgeInk(_ r: UInt8, _ g: UInt8, _ b: UInt8) -> (red: Bool, orange: Bool) {
+    let chroma = Int(r) - Int(b)
+    guard r > 160 && chroma > 60 else { return (false, false) }
+    let warmth = Int(g) - Int(b)
+    return (warmth * 100 < chroma * 35,
+            warmth * 100 >= chroma * 40 && warmth * 100 < chroma * 85)
+}
+func verifyBadgeInk() {
+    for background in [230, 255] {
+        for alpha in 30...100 {
+            func blend(_ value: Int) -> UInt8 {
+                UInt8((value * alpha + background * (100 - alpha)) / 100)
+            }
+            let red = badgeInk(blend(255), blend(59), blend(48))
+            let orange = badgeInk(blend(255), blend(149), blend(0))
+            assert(red.red && !red.orange, "Antialiased red must never count as orange")
+            assert(orange.orange && !orange.red, "Antialiased orange must never count as red")
+        }
+    }
+    for gray in UInt8.min...UInt8.max {
+        let ink = badgeInk(gray, gray, gray)
+        assert(!ink.red && !ink.orange, "Gray must not count as status ink")
+    }
+    print("PASS: badge hue separates red/orange antialiasing on light backgrounds and rejects gray")
+}
 // CI does not enable the process-wide accessibility tree. Inspect pixels from
 // the actual mounted NSHostingView instead, with Vision text recognition.
 @MainActor func rendered(_ window: NSWindow) throws -> (String, Int, Int, NSBitmapImageRep) {
@@ -73,9 +102,9 @@ def run_swiftui_test(harness, picker, tmp):
     for y in stride(from: 0, to: rep.pixelsHigh, by: 2) {
         for x in stride(from: rep.pixelsWide - 300, to: rep.pixelsWide, by: 2) {
             let offset = y * rep.bytesPerRow + x * 4
-            if data[offset] > 160 && data[offset + 1] < 100 && data[offset + 2] < 150 { red += 1 }
-            if data[offset] > 180 && data[offset + 1] >= 100 && data[offset + 1] < 220
-                && data[offset + 2] < 120 { orange += 1 }
+            let ink = badgeInk(data[offset], data[offset + 1], data[offset + 2])
+            if ink.red { red += 1 }
+            if ink.orange { orange += 1 }
         }
     }
     return (text, red, orange, rep)
@@ -114,6 +143,7 @@ def run_swiftui_test(harness, picker, tmp):
 }
 @main struct SwiftUIRegression {
     @MainActor static func main() async throws {
+        verifyBadgeInk()
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.accessory)
         NSApp.finishLaunching()

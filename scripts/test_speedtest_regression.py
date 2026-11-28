@@ -766,7 +766,7 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         assertInstanceProgress(throttled, "safe-today", done: 1, reached: 1, total: 1, skipped: 1)
         for position in 2...7 {
             assert(rateFrames.contains {
-                $0.reached == position && $0.done == position - 1 && $0.skipped == position - 1
+                $0.reached == position && $0.done == position && $0.skipped == position
             })
         }
         assert(zip(rateFrames, rateFrames.dropFirst()).allSatisfy { $0.0.reached <= $0.1.reached })

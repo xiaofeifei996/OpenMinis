@@ -673,12 +673,24 @@ private struct TodaySendRequest: Encodable {
     }
 
     static func context(messages: [LLMMessage], systemPrompt: String?) -> String {
-        var sections: [String] = []
-        if let systemPrompt, !systemPrompt.isEmpty { sections.append("[system]\n" + systemPrompt) }
-        for message in messages where !message.content.isEmpty {
-            sections.append("[\(message.role)]\n" + message.content)
+        func escaped(_ value: String) -> String {
+            value.replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+                .replacingOccurrences(of: "\"", with: "&quot;")
+                .replacingOccurrences(of: "'", with: "&apos;")
         }
-        return sections.joined(separator: "\n\n")
+        var sections: [String] = []
+        if let systemPrompt, !systemPrompt.isEmpty {
+            sections.append("<system-prompt>\n" + escaped(systemPrompt) + "\n</system-prompt>")
+        }
+        sections.append("<conversation>")
+        for message in messages where !message.content.isEmpty {
+            let role = message.role == .user ? "user" : "assistant"
+            sections.append("<turn role=\"\(role)\">\n\(escaped(message.content))\n</turn>")
+        }
+        sections.append("</conversation>")
+        return sections.joined(separator: "\n")
     }
 }
 

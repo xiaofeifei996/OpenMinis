@@ -26,7 +26,17 @@ def section(start, end):
 
 strings = json.loads((ROOT / 'src/ios/SpeedTest.xcstrings').read_text())['strings']
 quick_success = section('    func recordSuccessfulTextQuickTest(', '    /// Measure response latency')
+instance_progress = section('struct InstanceSpeedTestProgress:', '@MainActor\nfinal class ModelSpeedTestStatus')
+instance_button = picker[picker.index('    private struct InstanceSpeedTestButton: View'):]
+instance_button = instance_button[:instance_button.index('    private func isEntryUnavailable(')]
 checks = {
+    'per-instance position counts reached rows while preserving completed work':
+        'var reached: Int = 0' in instance_progress
+        and 'min(total,max(done,reached))' in ''.join(instance_progress.split()),
+    'API button displays reached position, but spinner still follows completion':
+        r'Text("\(joined.displayedPosition)/\(joined.total)")' in instance_button
+        and 'if joined.done < joined.total || joined.total == 0 {' in instance_button
+        and r'Text("\(joined.done)/\(joined.total)")' not in instance_button,
     'Quick Test writes completed latency live for all providers':
         'let measuredElapsed = elapsed.map { $0.isFinite && $0 > 0 } == true' in quick_success
         and 'latencyState.cache.entries[id] = elapsed' in quick_success
@@ -131,7 +141,7 @@ checks = {
     'background cleanup cannot overwrite an active snapshot':
         'guard !speedTestStatus.running else { return }' in source,
     'skipped rows finish per-instance progress without invented model errors':
-        'for entry in queue { complete(entry.providerInstanceId, skipped: true) }' in source,
+        'for entry in queue {\n                markReached(entry)\n                complete(entry.providerInstanceId, skipped: true)\n            }' in source,
     'header button invokes scoped entry point, not global':
         'InstanceSpeedTestButton(instanceId: item.instance.id' in picker
         and 'ChatOptimizer.shared.speedTestInstance(' in picker,
@@ -232,16 +242,54 @@ struct TestLog { func info(_ text: String) {} }
 production_harness = program
 # Evaluate the exact production button predicate in Swift alongside the real
 # scheduler, so this regression fails if partial coverage disables the UI again.
-instance_button = picker[picker.index('    private struct InstanceSpeedTestButton: View'):]
 button_disabled = instance_button.split('let isDisabled = ', 1)[1].split('\n', 1)[0]
+button_spinner = instance_button.split('if let joined {', 1)[1].split('if ', 1)[1].split(' {', 1)[0]
 program += '''
 @MainActor func apiButtonDisabled(_ optimizer: ChatOptimizer, _ instanceId: String) -> Bool {
     let status = optimizer.speedTestStatus
     let joined = status.running ? status.instances[instanceId] : nil
     return ''' + button_disabled + '''
 }
+@MainActor func apiButtonShowsSpinner(_ joined: InstanceSpeedTestProgress) -> Bool {
+    return ''' + button_spinner + '''
+}
 '''
 program += r'''
+// All waits observe fake-provider starts/holds, not a guessed scheduling delay.
+// The scheduler, progress type and deadline implementation above are unmodified
+// production Swift; only the provider response is controlled by this harness.
+@MainActor func waitFor(_ description: String, timeout: TimeInterval = 2,
+                        _ condition: () -> Bool) async throws {
+    let deadline = Date().addingTimeInterval(timeout)
+    while !condition() {
+        precondition(Date() < deadline, "Timed out waiting for \(description)")
+        try await Task.sleep(nanoseconds: 1_000_000)
+    }
+}
+@MainActor func waitForHeld(_ optimizer: ChatOptimizer, _ id: String,
+                           attempt: Int = 1, timeout: TimeInterval = 2) async throws {
+    try await waitFor("\(id) attempt \(attempt) to actually start and hold", timeout: timeout) {
+        optimizer.starts[id] == attempt && optimizer.held[id] != nil
+    }
+}
+func assertProgressBounds(_ statuses: [String: InstanceSpeedTestProgress]) {
+    for value in statuses.values {
+        assert(value.total >= 0 && value.done >= 0 && value.done <= value.total)
+        assert(value.reached >= 0 && value.reached <= value.total)
+        assert(value.skipped >= 0 && value.skipped <= value.done)
+        assert(value.displayedPosition == min(value.total, max(value.done, value.reached)))
+        assert(value.displayedPosition >= value.done && value.displayedPosition <= value.total)
+    }
+}
+@MainActor func assertInstanceProgress(_ optimizer: ChatOptimizer, _ instanceId: String,
+                                       done: Int, reached: Int, total: Int, skipped: Int = 0) {
+    guard let value = optimizer.speedTestStatus.instances[instanceId] else {
+        preconditionFailure("Missing progress for \(instanceId)")
+    }
+    assert(value.done == done && value.reached == reached && value.total == total
+        && value.skipped == skipped, "Unexpected progress for \(instanceId): \(value)")
+    assertProgressBounds([instanceId: value])
+}
 func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
     (0..<count).map { ModelEntry(id: "m\($0)", providerInstanceId: "a\($0 % accounts)") }
 }
@@ -340,8 +388,8 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         await duplicateAPI.value
         let expectedPartial = Set(partial.catalog.filter { $0.providerInstanceId == "a0" }.map(\.id) + ["m1"])
         assert(Set(partial.starts.keys) == expectedPartial && partial.starts.values.allSatisfy { $0 == 1 })
-        assert(partial.speedTestStatus.instances["a0"] == InstanceSpeedTestProgress(done: 4, total: 4, skipped: 0))
-        assert(partial.speedTestStatus.instances["a1"] == InstanceSpeedTestProgress(done: 1, total: 1, skipped: 0))
+        assertInstanceProgress(partial, "a0", done: 4, reached: 4, total: 4)
+        assertInstanceProgress(partial, "a1", done: 1, reached: 1, total: 1)
         assert(partial.speedTestStatus.instances["a2"] == nil)
         assert(!apiButtonDisabled(partial, "a0") && partial.maxActive <= 6 && partial.maxAccount <= 1)
         // A later automatic batch must not inherit the previous explicit lock.
@@ -352,6 +400,8 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
             try await Task.sleep(nanoseconds: 1_000_000)
         }
         assert(partial.held.count == 2 && partial.speedTestStatus.fullInstanceIds.isEmpty)
+        assertInstanceProgress(partial, "a0", done: 0, reached: 1, total: 1)
+        assertInstanceProgress(partial, "a1", done: 0, reached: 1, total: 1)
         assert(!apiButtonDisabled(partial, "a0"))
         partial.holdRequests = false
         partial.releaseHeld()
@@ -401,6 +451,101 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         assert(apiGlobal.speedTestStatus.instances.values.allSatisfy { $0.done == $0.total && $0.total == 4 })
         assert(apiGlobal.maxActive <= 6 && apiGlobal.maxAccount == 1)
         print("PASS: API/global upgrade and global/API join share one queue without duplicate probes")
+
+        // The extracted production value keeps completion independent from
+        // display position, including skipped work and defensive clamping.
+        var display = InstanceSpeedTestProgress()
+        assert(display.reached == 0 && display.displayedPosition == 0)
+        display.total = 7
+        display.done = 3
+        display.reached = 1
+        assert(display.displayedPosition == 3)
+        display.reached = 20
+        assert(display.displayedPosition == 7)
+        display.total = 0
+        assert(display.displayedPosition == 0)
+        display.total = 7
+        display.done = 6
+        display.reached = 7
+        assert(display.displayedPosition == 7 && apiButtonShowsSpinner(display))
+        display.done = 7
+        assert(!apiButtonShowsSpinner(display))
+
+        // Artificially hold EVERY response on one seven-row account. Advancing
+        // one continuation at a time proves position changes at the real next
+        // dispatch, never at enqueue and never by pretending a request finished.
+        let positions = ChatOptimizer()
+        positions.catalog = entries(7, accounts: 1) + entries(1, accounts: 1)
+        positions.holdRequests = true
+        var positionFrames: [InstanceSpeedTestProgress] = []
+        var completionFrames: [(Int, Int)] = []
+        let positionSubscription = positions.speedTestStatus.$instances.sink { statuses in
+            assertProgressBounds(statuses)
+            if let value = statuses["a0"] { positionFrames.append(value) }
+        }
+        let positionRun = Task { @MainActor in
+            await positions.speedTestAll(sessionId: nil, includeAllAccounts: true) {
+                completionFrames.append(($0, $1))
+            }
+        }
+        for position in 1...7 {
+            let id = "m\(position - 1)"
+            try await waitForHeld(positions, id)
+            assertInstanceProgress(positions, "a0", done: position - 1, reached: position, total: 7)
+            assert(positions.starts.count == position && positions.starts.values.allSatisfy { $0 == 1 })
+            assert(positions.latencyState.cache.entries.count == position - 1)
+            assert(completionFrames.last!.0 == position - 1 && completionFrames.last!.1 == 7)
+            assert(apiButtonShowsSpinner(positions.speedTestStatus.instances["a0"]!))
+            assert(positionFrames.contains { $0.done == position - 1 && $0.reached == position })
+            positions.held.removeValue(forKey: id)!.resume()
+        }
+        await positionRun.value
+        assertInstanceProgress(positions, "a0", done: 7, reached: 7, total: 7)
+        assert(completionFrames.last!.0 == 7 && completionFrames.last!.1 == 7)
+        assert(!apiButtonShowsSpinner(positions.speedTestStatus.instances["a0"]!))
+        assert(positions.maxAccount == 1 && positions.starts.count == 7)
+        assert(positionFrames.contains { $0.total == 7 && $0.done == 0 && $0.reached == 0 })
+        assert(zip(positionFrames, positionFrames.dropFirst()).allSatisfy { $0.0.reached <= $0.1.reached })
+        withExtendedLifetime(positionSubscription) {}
+        print("PASS: real serial dispatch publishes 1/7 before first completion, 2/7 only at second start, through 7/7 while still spinning, then done=7; duplicate catalog row counted once")
+
+        // Hold account B's first request while A advances through ALL seven.
+        // Then reverse the roles: neither account may borrow the other's starts,
+        // completed count or total, even when A has already reached its end.
+        let independent = ChatOptimizer()
+        independent.catalog = entries(14, accounts: 2)
+        independent.holdRequests = true
+        let independentSubscription = independent.speedTestStatus.$instances.sink {
+            assertProgressBounds($0)
+        }
+        let independentRun = Task { @MainActor in
+            await independent.speedTestAll(sessionId: nil, includeAllAccounts: true)
+        }
+        try await waitForHeld(independent, "m0")
+        try await waitForHeld(independent, "m1")
+        assertInstanceProgress(independent, "a0", done: 0, reached: 1, total: 7)
+        assertInstanceProgress(independent, "a1", done: 0, reached: 1, total: 7)
+        for account in 0..<2 {
+            for position in 1...7 {
+                let id = "m\((position - 1) * 2 + account)"
+                try await waitForHeld(independent, id)
+                assertInstanceProgress(independent, "a\(account)",
+                    done: position - 1, reached: position, total: 7)
+                assertInstanceProgress(independent, account == 0 ? "a1" : "a0",
+                    done: account == 0 ? 0 : 7, reached: account == 0 ? 1 : 7, total: 7)
+                independent.held.removeValue(forKey: id)!.resume()
+            }
+            try await waitFor("account a\(account) to finish") {
+                independent.speedTestStatus.instances["a\(account)"]?.done == 7
+            }
+        }
+        await independentRun.value
+        assertInstanceProgress(independent, "a0", done: 7, reached: 7, total: 7)
+        assertInstanceProgress(independent, "a1", done: 7, reached: 7, total: 7)
+        assert(independent.starts.count == 14 && independent.starts.values.allSatisfy { $0 == 1 })
+        assert(independent.maxAccount == 1 && independent.maxActive == 2)
+        withExtendedLifetime(independentSubscription) {}
+        print("PASS: two real seven-row accounts advance independently with all published positions bounded")
 
         // A SINGLE account is strictly serial and never consumes more than one
         // request slot.
@@ -569,32 +714,65 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         // Permanently rate-limited account is retried once after cooldown, then
         // skipped. The healthy account must finish BEFORE that cooldown ends.
         let throttled = ChatOptimizer()
-        let bad = (0..<6).map { ModelEntry(id: "bad\($0)", providerInstanceId: "rate") }
+        let bad = (0..<7).map { ModelEntry(id: "bad\($0)", providerInstanceId: "rate") }
         let good = (0..<4).map { ModelEntry(id: "good\($0)", providerInstanceId: "good") }
         let safeToday = [ModelEntry(id: "safeToday0", providerInstanceId: "safe-today")]
         throttled.store.todayAccounts = ["safe-today"]
         throttled.catalog = bad + good + safeToday
         for entry in bad + safeToday { throttled.failures[entry.id] = "HTTP 429 rate limited" }
         throttled.latencyState.cache.entries["bad0"] = 1.2
+        throttled.holdRequests = true
+        var rateFrames: [InstanceSpeedTestProgress] = []
+        let rateSubscription = throttled.speedTestStatus.$instances.sink { statuses in
+            assertProgressBounds(statuses)
+            if let value = statuses["rate"] { rateFrames.append(value) }
+        }
         var finalProgress = (0, 0)
         let throttleRun = Task { @MainActor in
             await throttled.speedTestAll(sessionId: nil, includeAllAccounts: true) { finalProgress = ($0, $1) }
         }
-        try await Task.sleep(nanoseconds: 100_000_000)
-        assert(good.allSatisfy { throttled.latencyState.cache.entries[$0.id] != nil })
-        assert(throttled.speedTestStatus.running)
+        try await waitForHeld(throttled, "bad0")
+        assertInstanceProgress(throttled, "rate", done: 0, reached: 1, total: 7)
+        throttled.holdRequests = false
+        throttled.releaseHeld()
+        try await waitFor("healthy account to finish while both throttled accounts cool down") {
+            good.allSatisfy { throttled.latencyState.cache.entries[$0.id] != nil }
+                && throttled.latencyState.cache.errors["bad0"] == "Rate limited"
+                && throttled.latencyState.cache.errors["safeToday0"] == "Rate limited"
+        }
+        assert(throttled.speedTestStatus.running && throttled.starts["bad0"] == 1)
+        assertInstanceProgress(throttled, "rate", done: 0, reached: 1, total: 7)
+        assertInstanceProgress(throttled, "good", done: 4, reached: 4, total: 4)
+        // Keep the real eight-second production cooldown, then hold the SECOND
+        // actual attempt so a duplicated reached count cannot hide in a fast 429.
+        throttled.holdRequests = true
+        try await waitForHeld(throttled, "bad0", attempt: 2, timeout: 12)
+        assertInstanceProgress(throttled, "rate", done: 0, reached: 1, total: 7)
+        assert(rateFrames.allSatisfy { $0.reached <= 1 && $0.done == 0 })
+        throttled.holdRequests = false
+        throttled.releaseHeld()
         await throttleRun.value
         assert(throttled.maxAccount <= 1 && throttled.starts.values.allSatisfy { $0 <= 2 })
         assert(throttled.starts["bad0"] == 2)
-        assert((1..<6).allSatisfy { throttled.starts["bad\($0)"] == nil })
+        assert((1..<7).allSatisfy { throttled.starts["bad\($0)"] == nil })
         assert(throttled.latencyState.cache.errors["bad0"] == "Rate limited")
-        assert((1..<6).allSatisfy { throttled.latencyState.cache.errors["bad\($0)"] == "Rate limited" })
+        assert((1..<7).allSatisfy { throttled.latencyState.cache.errors["bad\($0)"] == "Rate limited" })
         assert(throttled.latencyState.cache.errors["safeToday0"] == "Rate limited")
         assert(throttled.latencyState.cache.unavailable.isEmpty)
         assert(throttled.latencyState.cache.entries["bad0"] == 1.2)
-        assert(finalProgress.0 == 11 && finalProgress.1 == 11 && throttled.speedTestStatus.skipped > 0)
+        assert(finalProgress.0 == 12 && finalProgress.1 == 12 && throttled.speedTestStatus.skipped == 8)
+        assertInstanceProgress(throttled, "rate", done: 7, reached: 7, total: 7, skipped: 7)
+        assertInstanceProgress(throttled, "good", done: 4, reached: 4, total: 4)
+        assertInstanceProgress(throttled, "safe-today", done: 1, reached: 1, total: 1, skipped: 1)
+        for position in 2...7 {
+            assert(rateFrames.contains {
+                $0.reached == position && $0.done == position - 1 && $0.skipped == position - 1
+            })
+        }
+        assert(zip(rateFrames, rateFrames.dropFirst()).allSatisfy { $0.0.reached <= $0.1.reached })
         assert(throttled.maxByAccount["safe-today"] == 1 && throttled.starts["safeToday0"] == 2)
-        print("PASS: account-scoped 429 cooldown/retry/skip, healthy account proceeds, progress terminates")
+        withExtendedLifetime(rateSubscription) {}
+        print("PASS: actual repeated 429 keeps reached=1/done=0 at retry; skipped pump rows publish positions 2...7 and finish done=7/skipped=7, healthy account proceeds independently")
 
         // A stream opener that ignores cancellation MUST NOT hold the scheduler
         // hostage or be replaced by unbounded new requests. Late success cannot
@@ -610,9 +788,13 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         assert(Date().timeIntervalSince(begin) < 1)
         assert(stuck.starts.count == 1 && stuck.activeCount == 1 && stuck.maxAccount == 1)
         assert(stuckProgress.0 == 6 && stuckProgress.1 == 6 && stuck.speedTestStatus.skipped == 5)
+        assert(stuck.speedTestStatus.instances["a0"]?.displayedPosition == 6)
+        assertProgressBounds(stuck.speedTestStatus.instances)
         assert(stuck.latencyState.cache.errors.count == 1 && stuck.latencyState.cache.entries.isEmpty)
         await stuck.speedTestAll(sessionId: nil, perEntryTimeout: 0.02, includeAllAccounts: true)
         assert(stuck.starts.count == 1 && stuck.speedTestStatus.skipped == 6)
+        assert(stuck.speedTestStatus.instances["a0"]?.displayedPosition == 6)
+        assertProgressBounds(stuck.speedTestStatus.instances)
         stuck.releaseHeld()
         for _ in 0..<20 { await Task.yield() }
         assert(stuck.activeCount == 0 && stuck.latencyState.cache.entries.isEmpty)
@@ -650,23 +832,38 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         // Cancellation is not a model defect and must not dispatch more models.
         let cancelled = ChatOptimizer()
         cancelled.catalog = entries(30, accounts: 8)
-        for entry in cancelled.catalog { cancelled.delays[entry.id] = 500_000_000 }
+        cancelled.holdRequests = true
+        let cancellationSubscription = cancelled.speedTestStatus.$instances.sink {
+            assertProgressBounds($0)
+        }
         let cancellable = Task { @MainActor in
             await cancelled.speedTestAll(sessionId: nil, includeAllAccounts: true)
         }
-        try await Task.sleep(nanoseconds: 10_000_000)
+        for index in 0..<6 { try await waitForHeld(cancelled, "m\(index)") }
+        let cancellationSnapshot = cancelled.speedTestStatus.instances
+        assert(cancelled.starts.count == 6 && cancelled.activeCount == 6)
+        for account in 0..<8 {
+            assertInstanceProgress(cancelled, "a\(account)", done: 0,
+                reached: account < 6 ? 1 : 0, total: account < 6 ? 4 : 3)
+        }
         cancellable.cancel()
         await cancellable.value
-        for _ in 0..<20 { await Task.yield() }
-        assert(cancelled.starts.count <= 6 && !cancelled.speedTestStatus.running)
-        assert(cancelled.latencyState.cache.errors.isEmpty && cancelled.activeCount == 0)
+        assert(cancelled.starts.count == 6 && !cancelled.speedTestStatus.running)
+        assert(cancelled.speedTestStatus.instances == cancellationSnapshot)
+        assert(cancelled.latencyState.cache.errors.isEmpty && cancelled.speedTestStatus.skipped == 0)
+        // These producers ignore cancellation: releasing their continuations
+        // must not create new dispatches, completion credit or late progress.
+        cancelled.releaseHeld()
+        try await waitFor("cancelled producers to release their retained permits") { cancelled.activeCount == 0 }
+        assert(cancelled.speedTestStatus.instances == cancellationSnapshot)
         let preCancelled = Task { @MainActor in
             await cancelled.speedTestAll(sessionId: nil, includeAllAccounts: true)
         }
         preCancelled.cancel()
         await preCancelled.value
-        assert(cancelled.starts.count <= 6)
-        print("PASS: in-flight/pre-start cancellation, no red failures, no extra dispatch")
+        assert(cancelled.starts.count == 6 && cancelled.speedTestStatus.instances == cancellationSnapshot)
+        withExtendedLifetime(cancellationSubscription) {}
+        print("PASS: in-flight/pre-start cancellation freezes bounded per-account reached/done, no red failures, no extra dispatch or late progress")
         print("PASS: all production speed-test runtime regressions")
     }
 }

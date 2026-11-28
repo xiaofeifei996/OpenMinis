@@ -1804,7 +1804,7 @@ struct UnifiedModelPicker: View {
                         } else {
                             Image(systemName: "checkmark")
                         }
-                        Text("\(joined.done)/\(joined.total)")
+                        Text("\(joined.displayedPosition)/\(joined.total)")
                             .monospacedDigit()
                         if joined.skipped > 0 {
                             Text("\(joined.skipped) skipped")

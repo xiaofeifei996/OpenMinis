@@ -195,9 +195,16 @@ final class ModelLatencyState {
 }
 
 struct InstanceSpeedTestProgress: Equatable {
+    /// Number of unique models the scheduler has reached so far. This is
+    /// deliberately separate from `done`: a serial probe can otherwise leave
+    /// the button at 0/7 for the entire lifetime of the first request.
+    var reached: Int = 0
     var done: Int = 0
     var total: Int = 0
     var skipped: Int = 0
+    /// The visible position never goes backwards if a completion arrives
+    /// before the next serial probe is launched.
+    var displayedPosition: Int { min(total, max(done, reached)) }
 }
 
 /// Separate from per-entry results: progress cannot invalidate row badges.
@@ -763,22 +770,33 @@ final class ChatOptimizer {
         var queue: [ModelEntry] = []
         var knownIds: Set<String> = []
         var done = 0
+        var reached = 0
+        var reachedIds: Set<String> = []
         let globalLimit = min(6, max(1, concurrency))
         ModelLatencyDiagnostics.shared.record("scheduler-policy",
             source: "global:\(globalLimit),account:1,today:1", delayMs: perEntryTimeout.map { $0 * 1000 })
         var completedByInstance: [String: Int] = [:]
+        var reachedByInstance: [String: Int] = [:]
         var totalsByInstance: [String: Int] = [:]
         var skippedByInstance: [String: Int] = [:]
 
         func reportProgress() {
-            speedTestStatus.progress = "\(done)/\(entries.count)"
+            speedTestStatus.progress = "\(reached)/\(entries.count)"
             var statuses = speedTestStatus.instances
             for (id, total) in totalsByInstance {
-                statuses[id] = InstanceSpeedTestProgress(done: completedByInstance[id, default: 0],
-                    total: total, skipped: skippedByInstance[id, default: 0])
+                statuses[id] = InstanceSpeedTestProgress(
+                    reached: reachedByInstance[id, default: 0],
+                    done: completedByInstance[id, default: 0],
+                    total: total,
+                    skipped: skippedByInstance[id, default: 0])
             }
             if statuses != speedTestStatus.instances { speedTestStatus.instances = statuses }
             progress?(done, entries.count)
+        }
+        func markReached(_ entry: ModelEntry) {
+            guard reachedIds.insert(entry.id).inserted else { return }
+            reached += 1
+            reachedByInstance[entry.providerInstanceId, default: 0] += 1
         }
         func complete(_ providerId: String, skipped: Bool = false) {
             done += 1
@@ -893,6 +911,7 @@ final class ChatOptimizer {
                     // skipped for this run. Keep cached latency as history, but
                     // visibly label it as stale due to account throttling.
                     if exhaustedAccounts.contains(entry.providerInstanceId) {
+                        markReached(entry)
                         latencyState.cache.errors[entry.id] = "Rate limited"
                         publish(id: entry.id, seconds: latencyState.cache.entries[entry.id], error: "Rate limited")
                         complete(entry.providerInstanceId, skipped: true)
@@ -902,6 +921,8 @@ final class ChatOptimizer {
                     inFlight += 1
                     scheduled[entry.id] = entry.providerInstanceId
                     validationAtStart[entry.id] = self.textValidationRevisions[entry.id, default: 0]
+                    markReached(entry)
+                    reportProgress()
                     ModelLatencyDiagnostics.shared.record("probe-policy", id: entry.id,
                         account: entry.providerInstanceId,
                         delayMs: (perEntryTimeout ?? self.latencyPolicy(for: entry).timeout) * 1000)
@@ -1004,7 +1025,10 @@ final class ChatOptimizer {
             // No schedulable work remains: only permits held by cancelled but
             // uncooperative openers. Do not wait forever or launch more traffic.
             // Unmeasured rows keep their previous result; never invent failures.
-            for entry in queue { complete(entry.providerInstanceId, skipped: true) }
+            for entry in queue {
+                markReached(entry)
+                complete(entry.providerInstanceId, skipped: true)
+            }
             queue.removeAll()
             reportProgress()
         }

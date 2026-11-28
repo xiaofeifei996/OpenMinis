@@ -840,6 +840,7 @@ final class ChatOptimizer {
             var info: [AnyHashable: Any] = [ChatOptimizer.latencyChangedIdsKey: [id]]
             if let seconds {
                 info[ChatOptimizer.latencySecondsKey] = seconds
+            }
             if let error {
                 info[ChatOptimizer.latencyErrorKey] = error
             }

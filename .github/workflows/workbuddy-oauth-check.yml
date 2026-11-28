@@ -62,8 +62,6 @@ jobs:
             src/ios/Providers/Trae/TraeAccountManager.swift \
             src/ios/Providers/Trae/TraeStreamDialect.swift \
             src/ios/Providers/LLMProviderFactory.swift \
-            src/ios/Providers/TodayProvider.swift \
-            src/ios/Providers/TodayWebLoginPolicy.swift \
             src/ios/Providers/ProviderInstance.swift \
             src/ios/Providers/ProviderMigration.swift \
             src/ios/NativeOffloads/ModelUseOffloadBridge.swift \
@@ -74,7 +72,6 @@ jobs:
             src/ios/Agent/Chat/AIChatViewModel+ContextUsage.swift \
             src/ios/Debug/DebugRPCProviderChat.swift \
             src/ios/Views/Providers/AddProviderView.swift \
-            src/ios/Views/Providers/TodayWebLoginSheet.swift \
             src/ios/Views/Providers/ProviderInstanceDetailView.swift \
             src/ios/Views/Providers/ProviderInstancesView.swift \
             src/ios/Providers/ProviderTypes.swift
@@ -82,13 +79,6 @@ jobs:
             echo "Parsing $file"
             swiftc -frontend -parse "$file"
           done
-
-      - name: Test Today provider wiring and protocol
-        run: |
-          python3 scripts/test_today_provider.py
-          python3 scripts/test_today_protocol.py --require-swift
-          python3 scripts/test_today_web_login.py --require-swift --require-ios-typecheck
-          python3 scripts/test_today_web_login_wiring.py
 
       - name: Run Trae protocol regression tests
         shell: bash

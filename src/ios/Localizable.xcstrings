@@ -8121,23 +8121,6 @@
         }
       }
     },
-    "After signing in, tap “I've finished signing in” to check the session." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "After signing in, tap “I've finished signing in” to check the session."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "登录完成后，轻点“我已完成登录”以检查会话。"
-          }
-        }
-      }
-    },
     "After task %@ finishes" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14840,23 +14823,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "繼續遷移"
-          }
-        }
-      }
-    },
-    "Continue signing in" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Continue signing in"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "继续登录"
           }
         }
       }
@@ -24547,23 +24513,6 @@
         }
       }
     },
-    "I've finished signing in" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "I've finished signing in"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "我已完成登录"
-          }
-        }
-      }
-    },
     "If it's on a server, open it once in the Files app to reconnect, then pull down to refresh." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -27423,23 +27372,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "訊息字號"
-          }
-        }
-      }
-    },
-    "Messages are sent to your Today AI account's shared main chat and may affect the website's conversation and context. Text attachments (JSON, TXT, CSV, Markdown, YAML, and XML) are read locally and sent as text. Images, PDFs, other binary files, and agent tools are not supported. Canceling only stops local waiting and does not guarantee that upstream generation or billing stops." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Messages are sent to your Today AI account's shared main chat and may affect the website's conversation and context. Text attachments (JSON, TXT, CSV, Markdown, YAML, and XML) are read locally and sent as text. Images, PDFs, other binary files, and agent tools are not supported. Canceling only stops local waiting and does not guarantee that upstream generation or billing stops."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "消息会发送到您的 Today AI 账号共享主聊天，可能影响官网会话及上下文。文本文件（JSON、TXT、CSV、Markdown、YAML、XML）会在本地读取并以文本发送；不支持图片、PDF、其他二进制文件或 Agent 工具。取消只停止本地等待，不保证停止上游生成或计费。"
           }
         }
       }
@@ -32989,23 +32921,6 @@
         }
       }
     },
-    "Paste the __Secure-better-auth.session_token cookie from your signed-in todayai.cn session. It is stored securely in the iOS Keychain." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Paste the __Secure-better-auth.session_token cookie from your signed-in todayai.cn session. It is stored securely in the iOS Keychain."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "粘贴已登录 todayai.cn 网页的 __Secure-better-auth.session_token Cookie。凭据将安全地保存在 iOS 钥匙串中。"
-          }
-        }
-      }
-    },
     "Paused" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -36529,23 +36444,6 @@
         }
       }
     },
-    "Reading Today AI session status…" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Reading Today AI session status…"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在读取 Today AI 会话状态…"
-          }
-        }
-      }
-    },
     "Reading manifest…" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -37244,23 +37142,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "中轉類型：%1$@（%2$@偵測）"
-          }
-        }
-      }
-    },
-    "Reload page" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Reload page"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "重新加载"
           }
         }
       }
@@ -41197,23 +41078,6 @@
         }
       }
     },
-    "Session Cookie" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Session Cookie"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "会话 Cookie"
-          }
-        }
-      }
-    },
     "Sessions Deleted" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -42880,23 +42744,6 @@
         }
       }
     },
-    "Sign in on the official Today AI page. Enter your phone number and verification code there; Minis does not collect them." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sign in on the official Today AI page. Enter your phone number and verification code there; Minis does not collect them."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请在 Today AI 官方页面登录，并在该页面填写手机号和验证码；Minis 不会收集这些信息。"
-          }
-        }
-      }
-    },
     "Sign in to GitHub Copilot first." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -42944,40 +42791,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用 GitHub 登录"
-          }
-        }
-      }
-    },
-    "Sign in with Today AI" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sign in with Today AI"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用 Today AI 手机号登录"
-          }
-        }
-      }
-    },
-    "Sign in with a Today AI web session cookie — unofficial, use at your own risk" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sign in with a Today AI web session cookie — unofficial, use at your own risk"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用 Today AI 网页会话 Cookie 登录——非官方接口，风险自担"
           }
         }
       }
@@ -47136,23 +46949,6 @@
         }
       }
     },
-    "The Today AI page could not be loaded. Please try again." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The Today AI page could not be loaded. Please try again."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法加载 Today AI 页面，请重试。"
-          }
-        }
-      }
-    },
     "The agent asked for a stronger model" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -50895,40 +50691,6 @@
         }
       }
     },
-    "Today AI Shared Chat Warning" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Today AI Shared Chat Warning"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Today AI 共享主聊天风险提示"
-          }
-        }
-      }
-    },
-    "Today AI Website Login" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Today AI Website Login"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Today AI 官网登录"
-          }
-        }
-      }
-    },
     "Toggles reading replies aloud" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -54265,23 +54027,6 @@
         }
       }
     },
-    "Use a Today AI session cookie" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Use a Today AI session cookie"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用 Today AI 会话 Cookie"
-          }
-        }
-      }
-    },
     "Use of an organization, enterprise, or production account is strongly discouraged. Please sign in with a personal account whose loss you are prepared to accept." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -55651,23 +55396,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "等待中 — iCloud 限流至 %@"
-          }
-        }
-      }
-    },
-    "We couldn't verify the session. Check your connection or sign in again." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "We couldn't verify the session. Check your connection or sign in again."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法验证会话。请检查网络连接或重新登录。"
           }
         }
       }

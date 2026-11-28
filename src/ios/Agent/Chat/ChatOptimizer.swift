@@ -229,15 +229,14 @@ struct LatencyProbe: Sendable {
     // Keep the legacy deadline token readable without rewriting durable caches.
     // The UI describes this as a TEST timeout, never as model unavailability.
     var isTimeout: Bool {
-        error == "first-token timeout" || error == "Today AI did not finish the request in time."
+        error == "first-token timeout"
     }
 }
 
 struct LatencyProbePolicy {
-    let isToday: Bool
     // Keep each provider instance serial; the global policy controls fan-out.
     var accountLimit: Int { 1 }
-    var timeout: TimeInterval { isToday ? TodayCompletionPolicy.latencyProbeTimeout : 12 }
+    var timeout: TimeInterval { 12 }
 }
 
 /// All methods run on the main actor, so registration and the single winner
@@ -512,7 +511,7 @@ final class ChatOptimizer {
     }
 
     private func latencyPolicy(for entry: ModelEntry) -> LatencyProbePolicy {
-        LatencyProbePolicy(isToday: store.instance(for: entry.providerInstanceId)?.providerType == .today)
+        LatencyProbePolicy()
     }
 
     /// A nonempty text Quick Test proves this entry worked. Whenever a Quick
@@ -536,7 +535,7 @@ final class ChatOptimizer {
     }
 
     /// Measure response latency for one entry using a tiny prompt.
-    /// Streaming providers measure TTFT; Today measures completed-reply latency.
+    /// Streaming providers measure time to first text token.
     /// An explicit timeout remains an override for callers and offline tests.
     func measureLatency(entry: ModelEntry, sessionId: String?,
                         timeout: TimeInterval? = nil) async -> LatencyProbe {
@@ -608,8 +607,6 @@ final class ChatOptimizer {
             // max_tokens with HTTP 400, so a WORKING model showed the red ✗. The
             // probe is streaming and returns on the FIRST token, so a large
             // max_tokens costs nothing in TTFT for those streaming APIs.
-            // Today ignores this hint and yields only a completed reply; its
-            // independent policy budgets for the full native polling path.
             ModelLatencyDiagnostics.shared.record("stream-open-begin", id: entry.id, source: "plain")
             let stream = try await provider.streamMessage(
                 messages: messages,
@@ -621,7 +618,7 @@ final class ChatOptimizer {
             for try await chunk in stream {
                 if case .text(let t) = chunk, !t.isEmpty {
                     ModelLatencyDiagnostics.shared.record(
-                        latencyPolicy(for: entry).isToday ? "reply-completed" : "first-token",
+                        "first-token",
                         id: entry.id, source: "plain")
                     return LatencyProbe(seconds: Date().timeIntervalSince(start), error: nil)
                 }
@@ -632,15 +629,12 @@ final class ChatOptimizer {
             if Task.isCancelled || error is CancellationError {
                 return LatencyProbe(seconds: nil, error: "cancelled")
             }
-            let timedOut = (error as? URLError)?.code == .timedOut || TodayProvider.isCompletionTimeout(error)
-            let failure = LatencyProbe(seconds: nil, error: timedOut ? "first-token timeout" : msg,
-                retryAllowed: !TodayProvider.generationMayHaveBeenSubmitted(error))
+            let timedOut = (error as? URLError)?.code == .timedOut
+            let failure = LatencyProbe(seconds: nil, error: timedOut ? "first-token timeout" : msg)
             // A 429 must reach the account scheduler, not issue another request
             // through the agent envelope and double the throttled traffic.
             if Self.isThrottle(failure) { return failure }
-            // Today's plain/agent adapters reach the same paid POST + polling
-            // implementation. Retrying it cannot repair an envelope mismatch.
-            if latencyPolicy(for: entry).isToday || timedOut { return failure }
+            if timedOut { return failure }
             // [T-latency-agent-path] The probe above sends the plain
             // `streamMessage` body. Gateways that validate the request against
             // the envelope the agent loop uses reject it outright — Raccoon
@@ -774,7 +768,7 @@ final class ChatOptimizer {
         var reachedIds: Set<String> = []
         let globalLimit = min(6, max(1, concurrency))
         ModelLatencyDiagnostics.shared.record("scheduler-policy",
-            source: "global:\(globalLimit),account:1,today:1", delayMs: perEntryTimeout.map { $0 * 1000 })
+            source: "global:\(globalLimit),account:1", delayMs: perEntryTimeout.map { $0 * 1000 })
         var completedByInstance: [String: Int] = [:]
         var reachedByInstance: [String: Int] = [:]
         var totalsByInstance: [String: Int] = [:]

@@ -12,7 +12,6 @@ struct ProviderInstanceDetailView: View {
     /// [T-copilot-provider] Same device-code shape as Kimi's.
     @State private var showCopilotLogin = false
     @State private var showAutoClawLogin = false
-    @State private var showTodayWebLogin = false
     @State private var keyInputText = ""
     @State private var isFetchingModels = false
     /// [T-thinking-rules-ui-fix] Owned HERE, not inside ThinkingRulesSection: a .sheet on a
@@ -127,19 +126,6 @@ struct ProviderInstanceDetailView: View {
                 }
             }
         }
-        .sheet(isPresented: $showTodayWebLogin) {
-            if let instance = instance, instance.providerType == .today {
-                TodayWebLoginSheet { cookie in
-                    guard !cookie.isEmpty,
-                          !cookie.contains("\r"),
-                          !cookie.contains("\n") else { return }
-                    ProviderKeychainHelper.saveAPIKey(cookie, instanceId: instance.id)
-                    keyInputText = cookie
-                    oauthRefreshTrigger.toggle()
-                    Task { await store.refreshModels(for: instance) }
-                }
-            }
-        }
         .sheet(isPresented: $showManualTokenInput) {
             NavigationStack {
                 Form {
@@ -220,14 +206,6 @@ struct ProviderInstanceDetailView: View {
     @ViewBuilder
     private func instanceContent(_ instance: ProviderInstance) -> some View {
         List {
-            if instance.providerType == .today {
-                Section {
-                    Label(AppLocalized("Messages are sent to your Today AI account's shared main chat and may affect the website's conversation and context. Text attachments (JSON, TXT, CSV, Markdown, YAML, and XML) are read locally and sent as text. Images, PDFs, other binary files, and agent tools are not supported. Canceling only stops local waiting and does not guarantee that upstream generation or billing stops."), systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                } header: {
-                    Text("Today AI Shared Chat Warning")
-                }
-            }
             // MARK: Label
             Section("Label") {
                 TextField("Label", text: $editingLabel)
@@ -260,31 +238,14 @@ struct ProviderInstanceDetailView: View {
             } header: {
                 Text("Credential")
             } footer: {
-                if instance.providerType == .today {
-                    Text("Paste the __Secure-better-auth.session_token cookie from your signed-in todayai.cn session. It is stored securely in the iOS Keychain.")
-                } else {
-                    Text(instance.credentialType == .apiKey
-                         ? "API key is stored securely in the iOS Keychain."
-                         : "OAuth tokens are stored per-instance in the iOS Keychain.")
-                }
+                Text(instance.credentialType == .apiKey
+                     ? "API key is stored securely in the iOS Keychain."
+                     : "OAuth tokens are stored per-instance in the iOS Keychain.")
             }
 
-            if instance.providerType == .today {
-                Section {
-                    Button {
-                        showTodayWebLogin = true
-                    } label: {
-                        Label(AppLocalized("Sign in with Today AI"), systemImage: "safari")
-                    }
-                } footer: {
-                    Text(AppLocalized("Sign in on the official Today AI page. Enter your phone number and verification code there; Minis does not collect them."))
-                }
-            }
 
             // MARK: Custom Base URL
-            if instance.providerType != .today {
-                customBaseURLSection(instance)
-            }
+            customBaseURLSection(instance)
 
             // [T-mimo-shadow-voice] These LLM-config fields are gated by their own
             // providerType/capability checks (supportsCustomUserAgent, API-format
@@ -577,22 +538,16 @@ struct ProviderInstanceDetailView: View {
             }
             .font(.system(.body, design: .monospaced))
             .onAppear {
-                if instance.providerType != .today {
-                    AppLogger(category: "Provider").info("apiKeyTextField onAppear instanceId=\(instance.id.prefix(8)) rawKeyHit=\(rawKey != nil) rawKeyLen=\(rawKey?.count ?? 0) prevTextLen=\(keyInputText.count)")
-                }
+                AppLogger(category: "Provider").info("apiKeyTextField onAppear instanceId=\(instance.id.prefix(8)) rawKeyHit=\(rawKey != nil) rawKeyLen=\(rawKey?.count ?? 0) prevTextLen=\(keyInputText.count)")
                 keyInputText = rawKey ?? ""
             }
             .onChange(of: keyInputText) { newValue in
                 let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
                 if trimmed.isEmpty {
-                    if instance.providerType != .today {
-                        AppLogger(category: "Provider").warning("apiKeyTextField onChange→DELETE instanceId=\(instance.id.prefix(8)) prevRawKeyHit=\(rawKey != nil) prevRawKeyLen=\(rawKey?.count ?? 0) newLen=\(newValue.count)")
-                    }
+                    AppLogger(category: "Provider").warning("apiKeyTextField onChange→DELETE instanceId=\(instance.id.prefix(8)) prevRawKeyHit=\(rawKey != nil) prevRawKeyLen=\(rawKey?.count ?? 0) newLen=\(newValue.count)")
                     ProviderKeychainHelper.deleteAPIKey(instanceId: instance.id)
                 } else {
-                    if instance.providerType != .today {
-                        AppLogger(category: "Provider").info("apiKeyTextField onChange→SAVE instanceId=\(instance.id.prefix(8)) newLen=\(trimmed.count)")
-                    }
+                    AppLogger(category: "Provider").info("apiKeyTextField onChange→SAVE instanceId=\(instance.id.prefix(8)) newLen=\(trimmed.count)")
                     ProviderKeychainHelper.saveAPIKey(trimmed, instanceId: instance.id)
                 }
             }
@@ -718,7 +673,6 @@ struct ProviderInstanceDetailView: View {
         case .autoClaw: return AutoClawAPI.defaultBase
         case .trae: return TraeAPI.Site.china.apiOrigin
         case .traeInternational: return TraeAPI.Site.international.apiOrigin
-        case .today: return "https://todayai.cn"
         case .unsupported: return "—"
         }
     }
@@ -1155,7 +1109,7 @@ struct ProviderInstanceDetailView: View {
         case .openAI: return CodexOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .antigravity: return AntigravityOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .openRouter: return OpenRouterOAuthManager.shared.isAuthenticated(instanceId: instance.id)
-        case .today, .openAIResponses: return false // API key only
+        case .openAIResponses: return false // API key only
         case .xAI: return XAIOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .kimiCode: return KimiOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .githubCopilot: return CopilotOAuthManager.shared.isAuthenticated(instanceId: instance.id)
@@ -1210,7 +1164,7 @@ struct ProviderInstanceDetailView: View {
                 return OpenRouterOAuthManager.shared.maskedToken(instanceId: instance.id) ?? AppLocalized("Authenticated")
             }
             return AppLocalized("Not authenticated")
-        case .today, .openAIResponses:
+        case .openAIResponses:
             return AppLocalized("Not applicable") // API key only
         case .xAI:
             if XAIOAuthManager.shared.isAuthenticated(instanceId: instance.id) {
@@ -1277,7 +1231,6 @@ struct ProviderInstanceDetailView: View {
         case .autoClaw: return "使用智谱账号登录"
         case .trae: return "使用 Trae 账号登录"
         case .traeInternational: return "使用 Trae 国际版账号登录"
-        case .today: return AppLocalized("Use a Today AI session cookie")
         case .unsupported: return AppLocalized("Sign In")
         }
     }
@@ -1290,7 +1243,6 @@ struct ProviderInstanceDetailView: View {
             case .openAI: try await CodexOAuthManager.shared.login(instanceId: instance.id)
             case .antigravity: try await AntigravityOAuthManager.shared.login(instanceId: instance.id)
             case .openRouter: try await OpenRouterOAuthManager.shared.login(instanceId: instance.id)
-            case .today: return // Cookie-only; no OAuth flow.
             case .openAIResponses: break
             case .xAI: try await XAIOAuthManager.shared.login(instanceId: instance.id)
             case .kimiCode: break // device-code flow runs in KimiDeviceLoginSheet
@@ -1344,7 +1296,7 @@ struct ProviderInstanceDetailView: View {
         case .openAI: CodexOAuthManager.shared.logout(instanceId: instance.id)
         case .antigravity: AntigravityOAuthManager.shared.logout(instanceId: instance.id)
         case .openRouter: OpenRouterOAuthManager.shared.logout(instanceId: instance.id)
-        case .today, .openAIResponses: break // API key only
+        case .openAIResponses: break // API key only
         case .xAI: XAIOAuthManager.shared.logout(instanceId: instance.id)
         case .kimiCode: KimiOAuthManager.shared.logout(instanceId: instance.id)
         case .githubCopilot: CopilotOAuthManager.shared.logout(instanceId: instance.id)
@@ -1369,7 +1321,7 @@ struct ProviderInstanceDetailView: View {
             token = try? await AntigravityOAuthManager.shared.validAccessToken(instanceId: instance.id)
         case .openRouter:
             token = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id)
-        case .today, .openAIResponses:
+        case .openAIResponses:
             token = nil
         case .xAI:
             token = try? await XAIOAuthManager.shared.validAccessToken(instanceId: instance.id)
@@ -1406,7 +1358,6 @@ struct ProviderInstanceDetailView: View {
         case .raccoon: return "" // OAuth only
         case .autoClaw: return "" // OAuth only
         case .trae, .traeInternational: return "" // OAuth only
-        case .today: return "__Secure-better-auth.session_token=..."
         case .antigravity: return "API Key..."
         case .openRouter: return "sk-or-..."
         case .openAIResponses: return "sk-..."

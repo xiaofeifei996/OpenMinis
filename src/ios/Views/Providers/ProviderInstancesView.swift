@@ -413,7 +413,7 @@ private struct InstanceRow: View {
         case .openAI: return CodexOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .antigravity: return AntigravityOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .openRouter: return OpenRouterOAuthManager.shared.isAuthenticated(instanceId: instance.id)
-        case .today, .openAIResponses: return false // API key only
+        case .openAIResponses: return false // API key only
         case .xAI: return XAIOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .kimiCode: return KimiOAuthManager.shared.isAuthenticated(instanceId: instance.id)
         case .githubCopilot: return CopilotOAuthManager.shared.isAuthenticated(instanceId: instance.id)

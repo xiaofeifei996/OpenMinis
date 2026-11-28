@@ -232,11 +232,6 @@ final class TestSession: ObservableObject {
                 responseText = try await performTextProbe(entry: entry)
             } catch {
                 if Task.isCancelled || error is CancellationError { throw CancellationError() }
-                // Today already uses the same native completion + polling path
-                // in both adapters. A failure may follow a delivered paid POST.
-                if ProviderConfigStore.shared.instance(for: entry.providerInstanceId)?.providerType == .today {
-                    throw error
-                }
                 // [T-quicktest-agent-fallback] The plain probe uses the
                 // lightweight `streamMessage` envelope. Raccoon / 小浣熊
                 // rejects it with `400 param model unsupport` for every

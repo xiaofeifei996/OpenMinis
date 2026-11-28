@@ -90,8 +90,6 @@ enum LLMProviderFactory {
             return openCode(makeAutoClawProvider(instance: instance, model: entry.model))
         case .trae, .traeInternational:
             return openCode(makeTraeProvider(instance: instance, model: entry.model))
-        case .today:
-            return makeTodayProvider(instance: instance, model: entry.model)
         case .unsupported:
             throw FactoryError.voiceOnlyProvider
         }
@@ -727,13 +725,6 @@ enum LLMProviderFactory {
         }
         provider.streamTranslator = TraeDialect()
         return provider
-    }
-
-    /// Today AI uses a session cookie and its own canonical-v1 polling
-    /// protocol, so it must not be routed through OpenAIProvider.
-    static func makeTodayProvider(instance: ProviderInstance, model: LLMModel) -> TodayProvider {
-        let cookie = ProviderKeychainHelper.loadAPIKey(instanceId: instance.id) ?? ""
-        return TodayProvider(sessionCookie: cookie, model: model)
     }
 
     static func makeCopilotProvider(instance: ProviderInstance, model: LLMModel) -> OpenAIProvider {

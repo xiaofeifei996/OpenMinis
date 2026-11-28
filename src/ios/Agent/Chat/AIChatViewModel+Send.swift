@@ -444,7 +444,7 @@ extension AIChatViewModel {
             if !attachmentMetas.isEmpty {
                 var xml = "<user-attached-files>\n"
                 for meta in attachmentMetas {
-                    xml += "  <file path=\"\(TodayTextAttachmentContext.escapedAttribute(meta.path))\" url=\"\(TodayTextAttachmentContext.escapedAttribute(meta.minisURL))\" size=\"\(meta.size)\" modified=\"\(nowStr)\" />\n"
+                    xml += "  <file path=\"\(Self.escapedAttachmentAttribute(meta.path))\" url=\"\(Self.escapedAttachmentAttribute(meta.minisURL))\" size=\"\(meta.size)\" modified=\"\(nowStr)\" />\n"
                 }
                 xml += "</user-attached-files>"
                 userParts.append(.text(xml))
@@ -502,10 +502,7 @@ extension AIChatViewModel {
                 logger.info("[BubbleSpan] send: bubble removed before its history entry landed — dropping the stale turn")
                 return
             }
-            var userMessage = AgentMessage(role: .user, parts: userParts)
-            userMessage.todayAttachmentPaths = Set(attachmentMetas.map(\.path).filter {
-                $0.hasPrefix(TodayTextAttachmentContext.linuxUploadsPrefix)
-            })
+            let userMessage = AgentMessage(role: .user, parts: userParts)
             self.agentHistory.append(userMessage)
             userMsg.historyAnchorId = userMessage.anchorId
             userMsg.awaitingHistoryEntry = false

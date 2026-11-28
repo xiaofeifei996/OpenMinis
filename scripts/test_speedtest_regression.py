@@ -15,7 +15,6 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 source = (ROOT / 'src/ios/Agent/Chat/ChatOptimizer.swift').read_text()
 picker = (ROOT / 'src/ios/Views/Providers/UnifiedModelPicker.swift').read_text()
-today = (ROOT / 'src/ios/Providers/TodayProvider.swift').read_text()
 quick = (ROOT / 'src/ios/Views/Providers/ModelQuickTestSheet.swift').read_text()
 
 
@@ -71,32 +70,26 @@ checks = {
         all('"' + event + '"' in source for event in
             ['scheduler-policy', 'enqueue', 'account-cooldown', 'account-exhausted'])
         and 'delayMs: throttleCooldown * 1000' in source,
-    'default bounded parallelism and provider-specific per-account cap':
+    'default bounded parallelism and per-account cap are provider-neutral':
         'concurrency: Int = 6' in source
         and 'var accountLimit: Int { 1 }' in source
         and 'count < policy.accountLimit' in source
         and 'min(self.latencyPolicy(for: entry).accountLimit, globalLimit)' in source
         and 'let globalLimit = min(6, max(1, concurrency))' in source
-        and 'source: "global:\\(globalLimit),account:1,today:1"' in source,
-    'Today completion budget is derived from real poll and HTTP budgets only':
-        'var timeout: TimeInterval { isToday ? TodayCompletionPolicy.latencyProbeTimeout : 12 }' in source
+        and 'source: "global:\\(globalLimit),account:1"' in source,
+    'generic completion budget uses the bounded 12-second default':
+        'var timeout: TimeInterval { 12 }' in source
         and 'let deadline = timeout ?? policy.timeout' in source
-        and 'latencyProbeTimeout = pollingTimeout + 4 * requestTimeout' in today
-        and 'addingTimeInterval(TodayCompletionPolicy.pollingTimeout)' in today
-        and today.count('request.timeoutInterval = TodayCompletionPolicy.requestTimeout') == 2,
-    'Today never falls through to a second paid agent envelope':
-        'if latencyPolicy(for: entry).isToday || timedOut { return failure }' in source
-        and quick.index('?.providerType == .today') < quick.index('responseText = try await performAgentTextProbe'),
-    'submitted Today throttle cannot retry a generation; safe account cooldown remains':
-        'retryAllowed: !TodayProvider.generationMayHaveBeenSubmitted(error)' in source
+        and 'LatencyProbePolicy()' in section('    private func latencyPolicy(', '    private func performLatencyProbe('),
+    'generic probe timeout avoids agent fallback and keeps account behavior provider-neutral':
+        'if timedOut { return failure }' in source
+        and 'error == "first-token timeout"' in source
+        and 'if probe.retryAllowed, !exhaustedAccounts.contains(providerId)' in source,
+    'generic retry contract and HTTP 429 cooldown/retry remain':
+        'var retryAllowed: Bool = true' in source
+        and 'if Self.isThrottle(failure) { return failure }' in source
         and 'if probe.retryAllowed, !exhaustedAccounts.contains(providerId)' in source
-        and 'queue.insert(original, at: 0)' in source
-        and today.index('submitted = true') < today.index('let sent: TodaySendResponse')
-        and 'guard !(method == "POST" && path == "/v1/messages")' in today,
-    'Today client gate covers selection, POST, poll and cancellation across clients':
-        today.index('TodayAccountGate.shared.acquire(sessionCookie)') < today.index('try await selectModel(modelID)')
-        and today.count('await TodayAccountGate.shared.release(sessionCookie)') == 2
-        and 'Task { await self.cancel(account, id: id) }' in today,
+        and 'queue.insert(original, at: 0)' in source,
     'timeout is not a red failure, including legacy cached timeouts':
         'else if state.result.isTimeout' in picker
         and picker.index('else if state.result.isTimeout') < picker.index('} else if failed {')
@@ -169,20 +162,11 @@ types = section('struct ModelLatencyCache:', '/// Errors surfaced by `ChatOptimi
 fields = section('    let latencyState: ModelLatencyState', '    private init()')
 cache = section('    private func readLatencyCache()', '    /// All entries that are usable:')
 probe = section('    private func latencyPolicy(', '    private func performLatencyProbe(')
-today_policy = 'enum TodayCompletionPolicy {' + today.split('enum TodayCompletionPolicy {', 1)[1].split('\n}', 1)[0] + '\n}\n'
 scheduler = section('    func speedTestInstance(', '    /// Compatibility signal')
 notifications = section('    static let latencyUpdatedNotification', '    /// Whether a probe failure means')
 throttle = section('    private static func isThrottle(', '    /// The fastest available entry per the latency cache')
 
-program = 'import Foundation\nimport Combine\n' + today_policy + types + r'''
-enum ProviderType { case today, other }
-struct Instance { let providerType: ProviderType }
-@MainActor final class TestStore {
-    var todayAccounts: Set<String> = []
-    func instance(for id: String) -> Instance? {
-        Instance(providerType: todayAccounts.contains(id) ? .today : .other)
-    }
-}
+program = 'import Foundation\nimport Combine\n' + types + r'''
 struct ModelEntry: Sendable { let id: String; let providerInstanceId: String }
 enum ChatOptimizerSettings { static let latencyCacheKey = "speedtest-regression" }
 struct TestLog { func info(_ text: String) {} }
@@ -190,7 +174,6 @@ struct TestLog { func info(_ text: String) {} }
 ''' + fields + r'''
     let userDefaults = UserDefaults(suiteName: UUID().uuidString)!
     let logger = TestLog()
-    let store = TestStore()
     var noRetry: Set<String> = []
     var maxByAccount: [String: Int] = [:]
     var automatic: [ModelEntry] = []
@@ -555,39 +538,42 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         assert(single.maxActive == 1 && single.maxAccount == 1)
         print("PASS: single-account concurrency cap")
 
-        // Eleven models on each Today account are serial, not globally serial:
-        // a second Today account and one ordinary-account slot still proceed.
-        let todayBatch = ChatOptimizer()
-        todayBatch.store.todayAccounts = ["today-A", "today-B"]
-        let todayA = (0..<11).map { ModelEntry(id: "ta\($0)", providerInstanceId: "today-A") }
-        let todayB = (0..<11).map { ModelEntry(id: "tb\($0)", providerInstanceId: "today-B") }
-        let ordinary = (0..<8).map { ModelEntry(id: "o\($0)", providerInstanceId: "ordinary") }
-        todayBatch.catalog = todayA + todayB + ordinary
-        await todayBatch.speedTestAll(sessionId: nil, includeAllAccounts: true)
-        assert(todayBatch.starts.count == 30 && todayBatch.starts.values.allSatisfy { $0 == 1 })
-        assert(todayBatch.maxByAccount["today-A"] == 1 && todayBatch.maxByAccount["today-B"] == 1)
-        assert(todayBatch.maxByAccount["ordinary"] == 1 && todayBatch.maxActive == 3)
-        assert(todayBatch.speedTestStatus.instances["today-A"]?.done == 11)
-        assert(todayBatch.latencyState.cache.entries.count == 30)
-        assert(TodayCompletionPolicy.pollingTimeout == 120 && TodayCompletionPolicy.requestTimeout == 30)
-        assert(LatencyProbePolicy(isToday: true).timeout == 240)
-        assert(LatencyProbePolicy(isToday: false).timeout == 12)
-        assert(LatencyProbePolicy(isToday: true).accountLimit == 1)
-        assert(LatencyProbePolicy(isToday: false).accountLimit == 1)
-        print("PASS: eleven-model Today accounts serial; mixed provider instances each use one global slot")
+        // Eleven models on each of two accounts remain serial per account,
+        // while a third account uses another global slot.
+        let multiAccount = ChatOptimizer()
+        let accountA = (0..<11).map { ModelEntry(id: "aa\($0)", providerInstanceId: "account-A") }
+        let accountB = (0..<11).map { ModelEntry(id: "ab\($0)", providerInstanceId: "account-B") }
+        let accountC = (0..<8).map { ModelEntry(id: "ac\($0)", providerInstanceId: "account-C") }
+        multiAccount.catalog = accountA + accountB + accountC
+        await multiAccount.speedTestAll(sessionId: nil, includeAllAccounts: true)
+        assert(multiAccount.starts.count == 30 && multiAccount.starts.values.allSatisfy { $0 == 1 })
+        assert(multiAccount.maxByAccount["account-A"] == 1 && multiAccount.maxByAccount["account-B"] == 1)
+        assert(multiAccount.maxByAccount["account-C"] == 1 && multiAccount.maxActive == 3)
+        assert(multiAccount.speedTestStatus.instances["account-A"]?.done == 11)
+        assert(multiAccount.latencyState.cache.entries.count == 30)
+        print("PASS: multi-account batches stay serial per account and use independent global slots")
 
-        // Real production deadline timers, not a Python timing approximation:
-        // a 15.9-second completion survives Today defaults but not ordinary TTFT.
-        let slowToday = ChatOptimizer()
-        slowToday.store.todayAccounts = ["today"]
-        slowToday.catalog = [ModelEntry(id: "today-slow", providerInstanceId: "today"),
-                             ModelEntry(id: "ordinary-slow", providerInstanceId: "ordinary")]
-        for entry in slowToday.catalog { slowToday.delays[entry.id] = 15_900_000_000 }
-        await slowToday.speedTestAll(sessionId: nil, includeAllAccounts: true)
-        assert(slowToday.latencyState.cache.entries["today-slow"] != nil)
-        assert(slowToday.latencyState.entry(id: "ordinary-slow").result.isTimeout)
-        assert(slowToday.latencyState.cache.unavailable.isEmpty)
-        print("PASS: simulated 15.9s completed reply survives Today-only default budget; others still expire at 12s")
+        // An explicitly enlarged test deadline permits a slow ordinary account;
+        // normal runs still use the bounded 12-second provider-neutral default.
+        let slowService = ChatOptimizer()
+        let slowEntry = ModelEntry(id: "slow-reply", providerInstanceId: "slow-service")
+        slowService.catalog = [slowEntry]
+        slowService.delays[slowEntry.id] = 15_900_000_000
+        let defaultDeadline = ChatOptimizer()
+        defaultDeadline.catalog = [slowEntry]
+        defaultDeadline.delays[slowEntry.id] = 15_900_000_000
+        assert(LatencyProbePolicy().timeout == 12 && LatencyProbePolicy().accountLimit == 1)
+        let defaultRun = Task { @MainActor in
+            await defaultDeadline.speedTestAll(sessionId: nil, includeAllAccounts: true)
+        }
+        await slowService.speedTestAll(sessionId: nil, perEntryTimeout: 18, includeAllAccounts: true)
+        await defaultRun.value
+        assert(slowService.latencyState.cache.entries[slowEntry.id] != nil)
+        assert(defaultDeadline.latencyState.entry(id: slowEntry.id).result.isTimeout)
+        assert(defaultDeadline.latencyState.cache.entries[slowEntry.id] == nil)
+        assert(defaultDeadline.latencyState.cache.unavailable.isEmpty)
+        assert(slowService.latencyState.cache.unavailable.isEmpty)
+        print("PASS: simulated 15.9s ordinary-provider reply exceeds the 12s default, succeeds only with explicit deadline override")
 
         // Start automatic, then upgrade manually from two independent callers.
         // Both join the SAME run; hidden/disabled extra catalog entries are added.
@@ -636,18 +622,17 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
 
         // Quick Test measures completed response latency and immediately
         // updates the stable leaf and durable cache for any provider.
-        let liveToday = ChatOptimizer()
-        liveToday.store.todayAccounts = ["today-live"]
-        let liveTodayEntry = ModelEntry(id: "today-live-model", providerInstanceId: "today-live")
-        liveToday.catalog = [liveTodayEntry]
-        liveToday.latencyState.cache.entries[liveTodayEntry.id] = 8.1
-        let liveTodayLeaf = liveToday.latencyState.entry(id: liveTodayEntry.id)
-        liveToday.recordSuccessfulTextQuickTest(entry: liveTodayEntry, elapsed: 4.0)
-        assert(liveTodayLeaf.result.seconds == 4.0)
-        assert(liveToday.latencyState.cache.entries[liveTodayEntry.id] == 4.0)
-        let liveTodayDurable = try JSONDecoder().decode(ModelLatencyCache.self,
-            from: liveToday.userDefaults.data(forKey: ChatOptimizerSettings.latencyCacheKey)!)
-        assert(liveTodayDurable.entries[liveTodayEntry.id] == 4.0)
+        let liveAccount = ChatOptimizer()
+        let liveAccountEntry = ModelEntry(id: "live-model", providerInstanceId: "account-live")
+        liveAccount.catalog = [liveAccountEntry]
+        liveAccount.latencyState.cache.entries[liveAccountEntry.id] = 8.1
+        let liveAccountLeaf = liveAccount.latencyState.entry(id: liveAccountEntry.id)
+        liveAccount.recordSuccessfulTextQuickTest(entry: liveAccountEntry, elapsed: 4.0)
+        assert(liveAccountLeaf.result.seconds == 4.0)
+        assert(liveAccount.latencyState.cache.entries[liveAccountEntry.id] == 4.0)
+        let liveAccountDurable = try JSONDecoder().decode(ModelLatencyCache.self,
+            from: liveAccount.userDefaults.data(forKey: ChatOptimizerSettings.latencyCacheKey)!)
+        assert(liveAccountDurable.entries[liveAccountEntry.id] == 4.0)
         let liveOrdinary = ChatOptimizer()
         let liveOrdinaryEntry = ModelEntry(id: "glm-flash", providerInstanceId: "glm-instance")
         liveOrdinary.catalog = [liveOrdinaryEntry]
@@ -664,7 +649,7 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         // A successful TEXT smoke test clears only this entry's old failure.
         // Without a measured duration, it preserves any existing probe value.
         let verified = ChatOptimizer()
-        let verifiedEntry = ModelEntry(id: "verified", providerInstanceId: "today")
+        let verifiedEntry = ModelEntry(id: "verified", providerInstanceId: "account-verified")
         verified.catalog = [verifiedEntry]
         verified.latencyState.cache.errors = ["verified": "first-token timeout", "other": "failure"]
         verified.latencyState.cache.unavailable = ["verified"]
@@ -695,31 +680,29 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         assert(verifiedLeaf.result.error == "old failed probe" && verifiedLeaf.result.seconds == nil)
         print("PASS: text Quick Test clears exact failure, persists, preserves measured TTFT and supersedes older probe failures only")
 
-        // A 429 while polling an already-submitted Today generation must exhaust
-        // that account, NOT issue a second paid POST. Other accounts finish.
+        // A generic HTTP 429 exhausts that account for this run; the next
+        // account completes and no hard-unavailable result is recorded.
         let delivered = ChatOptimizer()
-        delivered.store.todayAccounts = ["today"]
-        delivered.catalog = (0..<11).map { ModelEntry(id: "paid\($0)", providerInstanceId: "today") }
-            + [ModelEntry(id: "healthy", providerInstanceId: "other")]
-        delivered.failures["paid0"] = "HTTP 429 rate limited"
-        delivered.noRetry = ["paid0"]
+        delivered.catalog = (0..<11).map { ModelEntry(id: "limited\($0)", providerInstanceId: "limited-account") }
+            + [ModelEntry(id: "healthy", providerInstanceId: "healthy-account")]
+        delivered.failures["limited0"] = "HTTP 429 rate limited"
+        delivered.noRetry = ["limited0"]
         await delivered.speedTestAll(sessionId: nil, includeAllAccounts: true)
-        assert(delivered.starts["paid0"] == 1 && delivered.starts.count == 2)
-        assert(delivered.speedTestStatus.instances["today"]?.skipped == 11)
-        assert(delivered.latencyState.cache.errors["paid0"] == "Rate limited")
+        assert(delivered.starts["limited0"] == 1 && delivered.starts.count == 2)
+        assert(delivered.speedTestStatus.instances["limited-account"]?.skipped == 11)
+        assert(delivered.latencyState.cache.errors["limited0"] == "Rate limited")
         assert(delivered.latencyState.cache.errors["healthy"] == nil)
         assert(delivered.latencyState.cache.unavailable.isEmpty)
-        print("PASS: delivered Today polling throttle never resends generation, skips account safely, other account completes")
+        print("PASS: generic account HTTP 429 does not retry a denied request and skips only that account")
 
         // Permanently rate-limited account is retried once after cooldown, then
         // skipped. The healthy account must finish BEFORE that cooldown ends.
         let throttled = ChatOptimizer()
         let bad = (0..<7).map { ModelEntry(id: "bad\($0)", providerInstanceId: "rate") }
         let good = (0..<4).map { ModelEntry(id: "good\($0)", providerInstanceId: "good") }
-        let safeToday = [ModelEntry(id: "safeToday0", providerInstanceId: "safe-today")]
-        throttled.store.todayAccounts = ["safe-today"]
-        throttled.catalog = bad + good + safeToday
-        for entry in bad + safeToday { throttled.failures[entry.id] = "HTTP 429 rate limited" }
+        let safeAccount = [ModelEntry(id: "safe0", providerInstanceId: "safe-account")]
+        throttled.catalog = bad + good + safeAccount
+        for entry in bad + safeAccount { throttled.failures[entry.id] = "HTTP 429 rate limited" }
         throttled.latencyState.cache.entries["bad0"] = 1.2
         throttled.holdRequests = true
         var rateFrames: [InstanceSpeedTestProgress] = []
@@ -738,7 +721,7 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         try await waitFor("healthy account to finish while both throttled accounts cool down") {
             good.allSatisfy { throttled.latencyState.cache.entries[$0.id] != nil }
                 && throttled.latencyState.cache.errors["bad0"] == "Rate limited"
-                && throttled.latencyState.cache.errors["safeToday0"] == "Rate limited"
+                && throttled.latencyState.cache.errors["safe0"] == "Rate limited"
         }
         assert(throttled.speedTestStatus.running && throttled.starts["bad0"] == 1)
         assertInstanceProgress(throttled, "rate", done: 0, reached: 1, total: 7)
@@ -757,20 +740,20 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         assert((1..<7).allSatisfy { throttled.starts["bad\($0)"] == nil })
         assert(throttled.latencyState.cache.errors["bad0"] == "Rate limited")
         assert((1..<7).allSatisfy { throttled.latencyState.cache.errors["bad\($0)"] == "Rate limited" })
-        assert(throttled.latencyState.cache.errors["safeToday0"] == "Rate limited")
+        assert(throttled.latencyState.cache.errors["safe0"] == "Rate limited")
         assert(throttled.latencyState.cache.unavailable.isEmpty)
         assert(throttled.latencyState.cache.entries["bad0"] == 1.2)
         assert(finalProgress.0 == 12 && finalProgress.1 == 12 && throttled.speedTestStatus.skipped == 8)
         assertInstanceProgress(throttled, "rate", done: 7, reached: 7, total: 7, skipped: 7)
         assertInstanceProgress(throttled, "good", done: 4, reached: 4, total: 4)
-        assertInstanceProgress(throttled, "safe-today", done: 1, reached: 1, total: 1, skipped: 1)
+        assertInstanceProgress(throttled, "safe-account", done: 1, reached: 1, total: 1, skipped: 1)
         for position in 2...7 {
             assert(rateFrames.contains {
                 $0.reached == position && $0.done == position && $0.skipped == position
             })
         }
         assert(zip(rateFrames, rateFrames.dropFirst()).allSatisfy { $0.0.reached <= $0.1.reached })
-        assert(throttled.maxByAccount["safe-today"] == 1 && throttled.starts["safeToday0"] == 2)
+        assert(throttled.maxByAccount["safe-account"] == 1 && throttled.starts["safe0"] == 2)
         withExtendedLifetime(rateSubscription) {}
         print("PASS: actual repeated 429 keeps reached=1/done=0 at retry; skipped pump rows publish positions 2...7 and finish done=7/skipped=7, healthy account proceeds independently")
 
@@ -800,20 +783,21 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         assert(stuck.activeCount == 0 && stuck.latencyState.cache.entries.isEmpty)
         print("PASS: hard deadline without task join, retained account permits, no overlap/late-cache overwrite")
 
-        let todayStuck = ChatOptimizer()
-        todayStuck.store.todayAccounts = ["today"]
-        todayStuck.catalog = (0..<11).map { ModelEntry(id: "st\($0)", providerInstanceId: "today") }
-        todayStuck.holdRequests = true
-        await todayStuck.speedTestAll(sessionId: nil, perEntryTimeout: 0.02, includeAllAccounts: true)
-        assert(todayStuck.starts.count == 1 && todayStuck.activeCount == 1)
-        assert(todayStuck.speedTestStatus.skipped == 10)
-        assert(todayStuck.latencyState.entry(id: "st0").result.isTimeout)
-        await todayStuck.speedTestAll(sessionId: nil, perEntryTimeout: 0.02, includeAllAccounts: true)
-        assert(todayStuck.starts.count == 1 && todayStuck.speedTestStatus.skipped == 11)
-        todayStuck.releaseHeld()
+        // A second ordinary account exercises the same permit invariant with
+        // a larger queue and an explicit short deadline.
+        let accountStuck = ChatOptimizer()
+        accountStuck.catalog = (0..<11).map { ModelEntry(id: "st\($0)", providerInstanceId: "stuck-account") }
+        accountStuck.holdRequests = true
+        await accountStuck.speedTestAll(sessionId: nil, perEntryTimeout: 0.02, includeAllAccounts: true)
+        assert(accountStuck.starts.count == 1 && accountStuck.activeCount == 1)
+        assert(accountStuck.speedTestStatus.skipped == 10)
+        assert(accountStuck.latencyState.entry(id: "st0").result.isTimeout)
+        await accountStuck.speedTestAll(sessionId: nil, perEntryTimeout: 0.02, includeAllAccounts: true)
+        assert(accountStuck.starts.count == 1 && accountStuck.speedTestStatus.skipped == 11)
+        accountStuck.releaseHeld()
         for _ in 0..<100 { await Task.yield() }
-        assert(todayStuck.activeCount == 0 && todayStuck.latencyState.cache.entries.isEmpty)
-        print("PASS: Today explicit deadline override, retained single account permit and late-result rejection")
+        assert(accountStuck.activeCount == 0 && accountStuck.latencyState.cache.entries.isEmpty)
+        print("PASS: explicit deadline override, retained single account permit and late-result rejection")
 
         // The same guarantee holds globally, across many different accounts.
         let globallyStuck = ChatOptimizer()

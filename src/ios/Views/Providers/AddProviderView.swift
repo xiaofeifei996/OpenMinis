@@ -180,7 +180,6 @@ struct AddProviderView: View {
     /// [T-copilot-provider] Same device-code shape as Kimi's.
     @State private var showCopilotLogin = false
     @State private var showAutoClawLogin = false
-    @State private var showTodayWebLogin = false
     @State private var oauthAuthTime: Date?
     @State private var showDataSharingConsent = false
     @State private var showImportFile = false
@@ -377,11 +376,6 @@ struct AddProviderView: View {
                     oauthMaskedToken = loadMaskedToken(type: .githubCopilot)
                     pendingOAuthDone = true
                 }
-            }
-        }
-        .sheet(isPresented: $showTodayWebLogin) {
-            TodayWebLoginSheet { cookie in
-                saveTodayLoginCookie(cookie)
             }
         }
         .fileImporter(isPresented: $showImportFile, allowedContentTypes: [.json]) { result in
@@ -682,14 +676,6 @@ struct AddProviderView: View {
 
     private var configureSection: some View {
         Group {
-            if selectedType == .today {
-                Section {
-                    Label(AppLocalized("Messages are sent to your Today AI account's shared main chat and may affect the website's conversation and context. Text attachments (JSON, TXT, CSV, Markdown, YAML, and XML) are read locally and sent as text. Images, PDFs, other binary files, and agent tools are not supported. Canceling only stops local waiting and does not guarantee that upstream generation or billing stops."), systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                } header: {
-                    Text("Today AI Shared Chat Warning")
-                }
-            }
             Section("Label") {
                 TextField("Provider label", text: $labelInput)
                     // [T-provider-label-keyboard] Declare the keyboard EXPLICITLY.
@@ -769,17 +755,6 @@ struct AddProviderView: View {
 
     private var apiKeySection: some View {
         Group {
-            if selectedType == .today {
-                Section {
-                    Button {
-                        showTodayWebLogin = true
-                    } label: {
-                        Label(AppLocalized("Sign in with Today AI"), systemImage: "safari")
-                    }
-                } footer: {
-                    Text(AppLocalized("Sign in on the official Today AI page. Enter your phone number and verification code there; Minis does not collect them."))
-                }
-            }
 
             Section {
                     HStack {
@@ -829,16 +804,12 @@ struct AddProviderView: View {
                         .buttonStyle(.plain)
                     }
                 } header: {
-                    Text(selectedType == .today ? AppLocalized("Session Cookie") : AppLocalized("API Key"))
+                    Text(AppLocalized("API Key"))
                 } footer: {
-                    if selectedType == .today {
-                        Text("Paste the __Secure-better-auth.session_token cookie from your signed-in todayai.cn session. It is stored securely in the iOS Keychain.")
-                    } else {
-                        Text("Your key is stored securely in the iOS Keychain and never leaves the device.")
-                    }
+                    Text("Your key is stored securely in the iOS Keychain and never leaves the device.")
                 }
 
-            if selectedType != .antigravity && selectedType != .today {
+            if selectedType != .antigravity {
                 customBaseURLSection
             }
 
@@ -1045,31 +1016,11 @@ struct AddProviderView: View {
         case .autoClaw: return AutoClawAPI.defaultBase
         case .trae: return TraeAPI.Site.china.apiOrigin
         case .traeInternational: return TraeAPI.Site.international.apiOrigin
-        case .today: return "https://todayai.cn"
         default: return "https://api.example.com"
         }
     }
 
     // MARK: - Actions
-
-    @MainActor
-    private func saveTodayLoginCookie(_ cookie: String) {
-        guard selectedType == .today,
-              !cookie.isEmpty,
-              !cookie.contains("\r"),
-              !cookie.contains("\n") else { return }
-        let trimmedLabel = labelInput.trimmingCharacters(in: .whitespaces)
-        let instance = ProviderInstance(
-            id: pendingInstanceId,
-            label: trimmedLabel.isEmpty ? defaultLabel(for: .today) : trimmedLabel,
-            providerType: .today,
-            credentialType: .apiKey
-        )
-        ProviderKeychainHelper.saveAPIKey(cookie, instanceId: instance.id)
-        store.addInstance(instance)
-        apiKeyInput = ""
-        dismiss()
-    }
 
     private func saveApiKeyInstance() {
         guard let type = selectedType else { return }
@@ -1147,7 +1098,6 @@ struct AddProviderView: View {
             case .openAI: try await CodexOAuthManager.shared.login(instanceId: pendingInstanceId)
             case .antigravity: try await AntigravityOAuthManager.shared.login(instanceId: pendingInstanceId)
             case .openRouter: try await OpenRouterOAuthManager.shared.login(instanceId: pendingInstanceId)
-            case .today: return // Cookie-only; no OAuth flow.
             case .openAIResponses: break // API key only, no OAuth
             case .xAI: try await XAIOAuthManager.shared.login(instanceId: pendingInstanceId)
             case .kimiCode: break // device-code flow runs in KimiDeviceLoginSheet, not here
@@ -1294,7 +1244,7 @@ struct AddProviderView: View {
         case .openRouter:
             // OpenRouter OAuth produces a permanent API key, not an OAuth token
             token = ProviderKeychainHelper.loadAPIKey(instanceId: pendingInstanceId)
-        case .today, .openAIResponses:
+        case .openAIResponses:
             token = nil // API key only, no OAuth
         case .xAI:
             token = ProviderKeychainHelper.loadOAuthToken(instanceId: pendingInstanceId, as: XAITokenStorage.self)?.accessToken
@@ -1420,7 +1370,6 @@ struct AddProviderView: View {
         case .autoClaw: return "使用智谱账号登录"
         case .trae: return "使用 Trae 账号登录"
         case .traeInternational: return "使用 Trae 国际版账号登录"
-        case .today: return AppLocalized("Use a Today AI session cookie")
         case .unsupported: return AppLocalized("Sign In")
         }
     }
@@ -1442,7 +1391,6 @@ struct AddProviderView: View {
         case .raccoon: return "xiaohuanxiong.com access token"
         case .autoClaw: return "AutoClaw access token"
         case .trae, .traeInternational: return ""
-        case .today: return "__Secure-better-auth.session_token=..."
         case .unsupported: return ""
         }
     }
@@ -1464,7 +1412,6 @@ struct AddProviderView: View {
         case .autoClaw: return "AutoClaw（智谱 AutoGLM）"
         case .trae: return "Trae（字节跳动）"
         case .traeInternational: return "Trae 国际版"
-        case .today: return "Today AI"
         case .unsupported: return AppLocalized("Unsupported")
         }
     }
@@ -1510,10 +1457,6 @@ struct AddProviderView: View {
         case .trae, .traeInternational:
             // Browser sign-in, plus the same manual escape hatch.
             return [.oauth]
-        case .today:
-            // The browser session cookie is entered through the protected
-            // credential field and stored in the API-key Keychain slot.
-            return [.apiKey]
         case .openAIResponses, .gemini:
             return [.apiKey]
         default:
@@ -1543,10 +1486,6 @@ struct AddProviderView: View {
             return "粘贴 Trae 客户端的 Cloud-IDE-JWT。"
         case (.traeInternational, .apiKey):
             return "粘贴 Trae 国际版客户端的 Cloud-IDE-JWT。"
-        case (.today, .apiKey):
-            return AppLocalized("Paste the __Secure-better-auth.session_token cookie from your signed-in todayai.cn session. It is stored securely in the iOS Keychain.")
-        case (.today, .oauth):
-            return "" // Cookie-only; not reachable from the credential selector.
         case (_, .apiKey):
             return AppLocalized("Use an API key from your \(type.displayName) account")
         case (.anthropic, .oauth):
@@ -1624,9 +1563,6 @@ struct AddProviderView: View {
         case .trae, .traeInternational:
             Image(systemName: "chevron.left.forwardslash.chevron.right")
                 .foregroundStyle(.indigo)
-        case .today:
-            Image(systemName: "sun.max.fill")
-                .foregroundStyle(.orange)
         case .githubCopilot:
             Image(systemName: "chevron.left.forwardslash.chevron.right")
                 .foregroundStyle(.primary)
@@ -1652,7 +1588,6 @@ struct AddProviderView: View {
         case .raccoon: return .orange
         case .autoClaw: return .teal
         case .trae, .traeInternational: return .indigo
-        case .today: return .orange
         case .unsupported: return .gray
         }
     }

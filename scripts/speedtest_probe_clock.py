@@ -4,24 +4,52 @@ Unlike the scheduler harness's fixed-result producer, this tests the real plain
 and agent-fallback measurements, including provider creation and empty deltas.
 The streams deliberately never send EOF: the first text must finish the test.
 """
+import argparse
+import shutil
 import subprocess
 from pathlib import Path
 
 
-def run_probe_clock_test(source, harness, tmp):
+def production_probes(source):
     start = source.index('    private func performLatencyProbe(')
     end = source.index('    /// All callers share one scheduler', start)
-    actual = source[start:end]
+    return source[start:end]
+
+
+def check_probe_contract(source):
+    actual = production_probes(source)
+    plain = actual[:actual.index('    private func probeViaAgentPath(')]
+    compact = ''.join(plain.split())
+    checks = {
+        'plain timeout classification is exclusively URLError.timedOut':
+            'lettimedOut=(erroras?URLError)?.code==.timedOutletfailure=' in compact,
+        'generic failures retain the default retry contract':
+            'letfailure=LatencyProbe(seconds:nil,error:timedOut?"first-tokentimeout":msg)' in compact,
+        'timeouts and throttles return before agent fallback':
+            0 <= plain.find('if Self.isThrottle(failure) { return failure }')
+            < plain.find('if timedOut { return failure }')
+            < plain.find('await probeViaAgentPath('),
+        'plain and agent paths measure from dispatch and ignore empty deltas':
+            actual.count('Date().timeIntervalSince(start)') == 2
+            and 'if case .text(let t) = chunk, !t.isEmpty {' in plain
+            and 'if case .textDelta(let t) = event, !t.isEmpty {' in actual,
+        'agent fallback preserves URL timeout and HTTP 429 handling':
+            'if (error as? URLError)?.code == .timedOut {' in actual
+            and 'return Self.isThrottle(failure) ? failure : nil' in actual,
+    }
+    for name, passed in checks.items():
+        print(('PASS' if passed else 'FAIL') + ': ' + name, flush=True)
+    assert all(checks.values())
+
+
+def run_probe_clock_test(source, harness, tmp):
+    actual = production_probes(source)
     start = harness.index('    private func performLatencyProbe(')
     end = harness.index('    private func readLatencyCache()', start)
     program = harness[:start] + actual + harness[end:]
     program = program.replace('struct TestLog { func info(_ text: String) {} }',
                               'struct TestLog { func info(_ text: String) {}\n'
                               'func warning(_ text: String) {} }')
-    today = (Path(__file__).resolve().parents[1] / 'src/ios/Providers/TodayProvider.swift').read_text()
-    errors = today[today.index('private enum TodayProviderError:'):today.index('/// Covers ALL Today clients')]
-    classifiers = today[today.index('    static func generationMayHaveBeenSubmitted('):today.index('    /// Account-scoped model discovery')]
-    program += errors + '\nenum TodayProvider {\n' + classifiers + '\n}\n'
     program += r'''
 enum Role { case user }
 struct LLMMessage { let role: Role; let content: String }
@@ -31,7 +59,9 @@ struct AgentMessage { let role: Role; let parts: [AgentPart] }
 enum AgentEvent: Sendable { case textDelta(String) }
 enum Thinking { case off }
 enum OpenCodeChannel { static func oneOffSessionId() -> String { "clock-test" } }
-struct EnvelopeError: LocalizedError { var errorDescription: String? { "unsupported envelope" } }
+struct EnvelopeError: LocalizedError { var errorDescription: String? { "400 param model unsupport" } }
+struct RateLimitError: LocalizedError { var errorDescription: String? { "HTTP 429 rate limited" } }
+struct TimeoutTextError: LocalizedError { var errorDescription: String? { "request timeout" } }
 @MainActor enum ProbeNetwork {
     static var failPlain = false
     static var plainError: Error = EnvelopeError()
@@ -105,24 +135,38 @@ struct EnvelopeError: LocalizedError { var errorDescription: String? { "unsuppor
             withExtendedLifetime(subscription) {}
             print("PASS: unchanged production \(fallback ? "fallback" : "plain") probe starts at dispatch, includes setup/empty deltas, returns at first text without EOF (\(measured)s)")
         }
-        let cases: [(Bool, Error, Bool, Bool)] = [
-            (false, URLError(.timedOut), true, true),
-            (true, EnvelopeError(), false, true),
-            (true, TodayProviderError.generationSubmitted(TodayProviderError.http(429, "rate limited")), false, false),
-            (true, TodayProviderError.generationSubmitted(TodayProviderError.timeout), true, false)
+        let cases: [(Error, Bool, String)] = [
+            (URLError(.timedOut), true, "first-token timeout"),
+            (RateLimitError(), false, "HTTP 429 rate limited"),
+            (CancellationError(), false, "cancelled")
         ]
-        for (today, error, timedOut, retryAllowed) in cases {
+        for (error, timedOut, message) in cases {
             ProbeNetwork.failPlain = true
             ProbeNetwork.plainError = error
             ProbeNetwork.agentCalls = 0
             let optimizer = ChatOptimizer()
-            if today { optimizer.store.todayAccounts = ["A"] }
             let entry = ModelEntry(id: "no-replay", providerInstanceId: "A")
             let result = await optimizer.measureLatency(entry: entry, sessionId: nil, timeout: 2)
             assert(result.seconds == nil && result.isTimeout == timedOut)
-            assert(result.retryAllowed == retryAllowed && ProbeNetwork.agentCalls == 0)
+            assert(result.error == message)
+            assert(result.retryAllowed && ProbeNetwork.agentCalls == 0)
         }
-        print("PASS: unchanged production probe and Today classifiers distinguish timeouts/submitted 429s without agent replay")
+        print("PASS: production probe uses generic URL timeout, HTTP 429 and cancellation failures without agent replay; default retry contract remains")
+
+        // An error mentioning timeout is not a URL timeout; like the Raccoon
+        // envelope mismatch, it must still be eligible for the agent path.
+        let recoveryErrors: [Error] = [EnvelopeError(), TimeoutTextError()]
+        for error in recoveryErrors {
+            ProbeNetwork.failPlain = true
+            ProbeNetwork.plainError = error
+            ProbeNetwork.agentCalls = 0
+            let optimizer = ChatOptimizer()
+            let result = await optimizer.measureLatency(
+                entry: ModelEntry(id: "agent-recovery", providerInstanceId: "A"), sessionId: nil, timeout: 2)
+            assert(result.seconds != nil && result.error == nil && !result.isTimeout)
+            assert(result.retryAllowed && ProbeNetwork.agentCalls == 1)
+        }
+        print("PASS: Raccoon-style envelope mismatch and arbitrary timeout text retain generic agent recovery")
     }
 }
 '''
@@ -132,3 +176,19 @@ struct EnvelopeError: LocalizedError { var errorDescription: String? { "unsuppor
     subprocess.run(['swiftc', '-swift-version', '5', '-parse-as-library', str(swift), '-o', str(binary)],
                    check=True, timeout=90)
     subprocess.run([str(binary)], check=True, timeout=15)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--static-only', action='store_true',
+                        help='check production probe contracts without compiling Swift')
+    args = parser.parse_args()
+    root = Path(__file__).resolve().parents[1]
+    source = (root / 'src/ios/Agent/Chat/ChatOptimizer.swift').read_text()
+    check_probe_contract(source)
+    if args.static_only or not shutil.which('swiftc'):
+        print('SKIP: Swift probe runtime (static-only requested or swiftc unavailable)')
+    else:
+        # The parent harness supplies the extracted cache/policy/scheduler types
+        # and invokes run_probe_clock_test; this module does not duplicate them.
+        subprocess.run(['python3', str(root / 'scripts/test_speedtest_regression.py')], check=True)

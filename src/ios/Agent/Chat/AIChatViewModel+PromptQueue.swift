@@ -220,11 +220,15 @@ extension AIChatViewModel {
             try? FileManager.default.createDirectory(at: uploadsDir, withIntermediateDirectories: true)
 
             var combinedParts: [AgentContentPart] = []
+            var combinedAttachmentPaths = Set<String>()
             var drainPastedParts: [String: [ContentPart]] = [:]
             for prompt in queued {
                 if !prompt.attachments.isEmpty {
                     let (attParts, attMetas) = self.processAttachments(prompt.attachments, uploadsDir: uploadsDir, nowStr: nowStr)
                     combinedParts.append(contentsOf: attParts)
+                    combinedAttachmentPaths.formUnion(attMetas.map(\.path).filter {
+                        $0.hasPrefix(TodayTextAttachmentContext.linuxUploadsPrefix)
+                    })
                     Self.cleanupAttachmentFiles(prompt.attachments)
                     if let chatMsg = self.messages.first(where: { $0.queuedPromptId == prompt.id }) {
                         chatMsg.attachments = attMetas
@@ -263,7 +267,8 @@ extension AIChatViewModel {
             }
 
             if let drainReminder { combinedParts.append(.text(drainReminder)) }
-            let queueAgentMsg = AgentMessage(role: .user, parts: combinedParts)
+            var queueAgentMsg = AgentMessage(role: .user, parts: combinedParts)
+            queueAgentMsg.todayAttachmentPaths = combinedAttachmentPaths
             let qIdx = self.agentHistory.count
             self.agentHistory.append(queueAgentMsg)
             // [T-edit-anchor-link] Every drained bubble links to the one entry.
@@ -389,11 +394,15 @@ extension AIChatViewModel {
         try? FileManager.default.createDirectory(at: qUploadsDir, withIntermediateDirectories: true)
 
         var qCombinedParts: [AgentContentPart] = []
+        var qAttachmentPaths = Set<String>()
         var qPastedParts: [String: [ContentPart]] = [:]
         for prompt in queued {
             if !prompt.attachments.isEmpty {
                 let (attParts, attMetas) = processAttachments(prompt.attachments, uploadsDir: qUploadsDir, nowStr: qNowStr)
                 qCombinedParts.append(contentsOf: attParts)
+                qAttachmentPaths.formUnion(attMetas.map(\.path).filter {
+                    $0.hasPrefix(TodayTextAttachmentContext.linuxUploadsPrefix)
+                })
                 Self.cleanupAttachmentFiles(prompt.attachments)
                 // Update the corresponding ChatMessage so attachment thumbnails appear in the UI
                 if let chatMsg = messages.first(where: { $0.queuedPromptId == prompt.id }) {
@@ -454,7 +463,8 @@ extension AIChatViewModel {
             qCombinedParts.append(.text(RawMessage.queuedInterruptReminderText))
         }
 
-        let queueMsg = AgentMessage(role: .user, parts: qCombinedParts)
+        var queueMsg = AgentMessage(role: .user, parts: qCombinedParts)
+        queueMsg.todayAttachmentPaths = qAttachmentPaths
         let queueIdx = agentHistory.count
         agentHistory.append(queueMsg)
         // [T-edit-anchor-link] Every injected bubble links to the one entry.

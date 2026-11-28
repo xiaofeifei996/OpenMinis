@@ -141,7 +141,14 @@ extension AIChatViewModel {
         case .trae, .traeInternational:
             return OpenAIAgentProvider(provider: wrap(LLMProviderFactory.makeTraeProvider(instance: instance, model: entry.model)))
         case .today:
-            return TodayAgentProvider(provider: LLMProviderFactory.makeTodayProvider(instance: instance, model: entry.model))
+            return TodayAgentProvider(
+                provider: LLMProviderFactory.makeTodayProvider(instance: instance, model: entry.model),
+                resolveUploadsDirectory: {
+                    let sid = resolveSessionId() ?? "draft"
+                    return Self.minisAttachmentsPersistentDir(for: sid)
+                        .appendingPathComponent("uploads", isDirectory: true)
+                }
+            )
         case .githubCopilot:
             // [T-copilot-no-chat-warning] No warning in the chat.
             //
@@ -543,10 +550,12 @@ extension AIChatViewModel {
 
 }
 
-/// Today supports text chat only: tool definitions are not sent and tool calls
-/// are never generated. Keep this adapter here to reuse existing build/CI entries.
+/// Today supports one text completion per user turn: the upstream protocol
+/// cannot invoke native tools or accept images. Text files attached through
+/// Minis are resolved locally and inlined into the single request.
 private struct TodayAgentProvider: AgentProvider {
     let provider: TodayProvider
+    let resolveUploadsDirectory: @Sendable () -> URL
 
     var name: String { provider.name }
     var model: LLMModel { provider.model.withModalityOverride(.textOnly) }
@@ -560,28 +569,81 @@ private struct TodayAgentProvider: AgentProvider {
         thinkingLevel: ThinkingLevel
     ) async throws -> AsyncThrowingStream<AgentStreamEvent, Error> {
         try Task.checkCancellation()
-        let textMessages = try messages.map { message in
-            let text = try message.parts.map { part -> String in
-                guard case .text(let text) = part else {
+        let latestUserIndex = messages.lastIndex(where: { $0.role == .user })
+        let uploadsDirectory = resolveUploadsDirectory()
+        var attachmentBytes = 0
+        var textMessages: [LLMMessage] = []
+        textMessages.reserveCapacity(messages.count)
+        for (messageIndex, message) in messages.enumerated() {
+            let isCurrentUserMessage = messageIndex == latestUserIndex
+            var authorizedPaths = isCurrentUserMessage ? message.todayAttachmentPaths : []
+            var parts: [String] = []
+            for part in message.parts {
+                switch part {
+                case .text(let text):
+                    if isCurrentUserMessage {
+                        parts.append(try TodayTextAttachmentContext.expandingAttachments(
+                            in: text, uploadsDirectory: uploadsDirectory,
+                            authorizedPaths: &authorizedPaths,
+                            accumulatedBytes: &attachmentBytes
+                        ))
+                    } else {
+                        parts.append(TodayTextAttachmentContext.removingAttachmentIndexes(in: text))
+                    }
+                case .imageData:
+                    guard isCurrentUserMessage else {
+                        parts.append("[An earlier image attachment was omitted; Today AI cannot analyze images.]")
+                        continue
+                    }
                     throw NSError(
                         domain: "TodayAgentProvider", code: 1,
                         userInfo: [NSLocalizedDescriptionKey:
-                            "Today AI only supports text chat; images, tool calls and tool results are not supported."]
+                            "Today AI accepts text only and cannot analyze image attachments. Choose an image-capable model."]
                     )
+                case .toolUse(_, let name, let input, _):
+                    let data = try? JSONSerialization.data(withJSONObject: input, options: [.sortedKeys, .fragmentsAllowed])
+                    let arguments = data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                    parts.append("[Previous tool call: \(name)]\n\(arguments)")
+                case .toolResult(_, let name, let content, let isError, let imageData, _, _, _, _):
+                    if imageData != nil {
+                        parts.append("[An earlier image tool result was omitted; Today AI cannot analyze images.]")
+                    }
+                    parts.append("[Previous tool result: \(name)\(isError ? ", error" : "")]\n\(content)")
                 }
-                return text
-            }.joined(separator: "\n")
-            return LLMMessage(role: message.role == .user ? .user : .assistant, content: text)
+            }
+            textMessages.append(LLMMessage(
+                role: message.role == .user ? .user : .assistant,
+                content: parts.joined(separator: "\n")
+            ))
         }
-        // `tools` lists available definitions, not actual calls. A nonempty
-        // list must not prevent ordinary text chat. Thinking is unsupported.
+        // The normal agent meter sees attachment indexes, not extracted data.
+        // Re-check the complete expanded request before any upstream submission.
+        let estimatedInput = textMessages.reduce(0) {
+            $0 + ContextSizeMeter.estimateTokens($1.content) + 16
+        } + ContextSizeMeter.estimateTokens(systemPrompt ?? "")
+        let inputBudget = max(0, model.contextWindowTokens - maxTokens - 1024)
+        guard Double(estimatedInput) * 1.25 <= Double(inputBudget) else {
+            throw NSError(
+                domain: "TodayAgentProvider", code: 3,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "The expanded conversation and text attachments exceed Today AI’s context budget. Start a new chat or attach smaller files."]
+            )
+        }
+        // `tools` lists locally available definitions; Today receives no tool
+        // schema and cannot call them. Previously completed calls are retained
+        // above as text so switching an existing session stays intelligible.
         let provider = self.provider
+        let outgoingMessages = textMessages
+        let textOnlySystemPrompt = [
+            systemPrompt,
+            "This provider supports one text response per user turn and has no tool access. Analyze the supplied text and extracted attachments directly and give the completed answer in this response. Do not claim to open local paths, call tools, or continue working after responding. If required data is missing, say exactly what is missing."
+        ].compactMap { $0 }.joined(separator: "\n\n")
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     try Task.checkCancellation()
                     let response = try await provider.sendMessage(
-                        messages: textMessages, systemPrompt: systemPrompt,
+                        messages: outgoingMessages, systemPrompt: textOnlySystemPrompt,
                         maxTokens: maxTokens, temperature: nil
                     )
                     try Task.checkCancellation()

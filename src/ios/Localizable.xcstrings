@@ -27427,19 +27427,19 @@
         }
       }
     },
-    "Messages are sent to your Today AI account's shared main chat and may affect the website's conversation and context. Text only: images and agent tools are not supported. Canceling only stops local waiting and does not guarantee that upstream generation or billing stops." : {
+    "Messages are sent to your Today AI account's shared main chat and may affect the website's conversation and context. Text attachments (JSON, TXT, CSV, Markdown, YAML, and XML) are read locally and sent as text. Images, PDFs, other binary files, and agent tools are not supported. Canceling only stops local waiting and does not guarantee that upstream generation or billing stops." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Messages are sent to your Today AI account's shared main chat and may affect the website's conversation and context. Text only: images and agent tools are not supported. Canceling only stops local waiting and does not guarantee that upstream generation or billing stops."
+            "value" : "Messages are sent to your Today AI account's shared main chat and may affect the website's conversation and context. Text attachments (JSON, TXT, CSV, Markdown, YAML, and XML) are read locally and sent as text. Images, PDFs, other binary files, and agent tools are not supported. Canceling only stops local waiting and does not guarantee that upstream generation or billing stops."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "消息会发送到您的 Today AI 账号共享主聊天，可能影响官网会话及上下文。仅支持文本，不支持图片或 Agent 工具。取消仅停止本地等待，不保证停止上游生成或计费。"
+            "value" : "消息会发送到您的 Today AI 账号共享主聊天，可能影响官网会话及上下文。文本文件（JSON、TXT、CSV、Markdown、YAML、XML）会在本地读取并以文本发送；不支持图片、PDF、其他二进制文件或 Agent 工具。取消只停止本地等待，不保证停止上游生成或计费。"
           }
         }
       }

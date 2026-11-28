@@ -684,7 +684,7 @@ struct AddProviderView: View {
         Group {
             if selectedType == .today {
                 Section {
-                    Label(AppLocalized("Messages are sent to your Today AI account's shared main chat and may affect the website's conversation and context. Text only: images and agent tools are not supported. Canceling only stops local waiting and does not guarantee that upstream generation or billing stops."), systemImage: "exclamationmark.triangle.fill")
+                    Label(AppLocalized("Messages are sent to your Today AI account's shared main chat and may affect the website's conversation and context. Text attachments (JSON, TXT, CSV, Markdown, YAML, and XML) are read locally and sent as text. Images, PDFs, other binary files, and agent tools are not supported. Canceling only stops local waiting and does not guarantee that upstream generation or billing stops."), systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                 } header: {
                     Text("Today AI Shared Chat Warning")

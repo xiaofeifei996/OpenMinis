@@ -287,6 +287,11 @@ struct AgentMessage: @unchecked Sendable {
     /// via id instead of sort_order. nil while the message is still in-flight
     /// (e.g. mid-stream before persist).
     var dbMessageId: String? = nil
+    /// App-created file paths attached to the CURRENT live user turn only.
+    /// In-memory provenance for providers that inline text files; intentionally
+    /// not persisted, so caller-authored/history XML can never grant file-read
+    /// authority on a later turn or after reload.
+    var todayAttachmentPaths: Set<String> = []
     /// [T-edit-anchor-link] In-memory identity linking a user-bubble entry to
     /// its chat bubble(s) (`ChatMessage.historyAnchorId`). Never persisted or
     /// synced: every load mints fresh ones on both sides from the same row.

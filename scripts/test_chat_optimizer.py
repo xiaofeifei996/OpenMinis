@@ -91,6 +91,16 @@ def main() -> int:
     args = parser.parse_args()
 
     ok = True
+    add_provider = ROOT / "src/ios/Views/Providers/AddProviderView.swift"
+    if add_provider.exists():
+        add_provider_text = add_provider.read_text()
+        no_ghost_transition = (
+            ".transition(.asymmetric(" not in add_provider_text
+            and ".animation(.spring(response: 0.35, dampingFraction: 0.88), value: currentStep)" not in add_provider_text
+            and ".id(currentStep)" in add_provider_text
+        )
+        print(("PASS" if no_ghost_transition else "FAIL") + ": provider step changes avoid layered List transitions")
+        ok &= no_ghost_transition
     for path, name, needle in CHECKS:
         if not path.exists():
             continue

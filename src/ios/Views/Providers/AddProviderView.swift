@@ -213,10 +213,11 @@ struct AddProviderView: View {
                 configureSection
             }
         }
-        .transition(.asymmetric(
-            insertion: .move(edge: .trailing).combined(with: .opacity),
-            removal: .move(edge: .leading).combined(with: .opacity)
-        ))
+        // SwiftUI List animates row replacement itself. A custom opacity/move
+        // transition on an identity-changing List child layers old and new row
+        // snapshots, producing a brief ghost image when entering the next step.
+        // Keep the fresh identity (so the new step starts at the top), but let
+        // List replace it without a second competing transition.
         .id(currentStep)
     }
 
@@ -285,7 +286,9 @@ struct AddProviderView: View {
         List {
             steppedContent
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.88), value: currentStep)
+        // Step changes rebuild the List rows without an additional implicit
+        // spring animation; this avoids stale cell snapshots flashing over the
+        // newly selected provider flow.
         .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

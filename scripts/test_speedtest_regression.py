@@ -27,10 +27,10 @@ def section(start, end):
 strings = json.loads((ROOT / 'src/ios/SpeedTest.xcstrings').read_text())['strings']
 quick_success = section('    func recordSuccessfulTextQuickTest(', '    /// Measure response latency')
 checks = {
-    'Today Quick Test writes completed latency live; other providers retain TTFT semantics':
-        'let measuredToday = isToday && elapsed.map { $0.isFinite && $0 > 0 } == true' in quick_success
+    'Quick Test writes completed latency live for all providers':
+        'let measuredElapsed = elapsed.map { $0.isFinite && $0 > 0 } == true' in quick_success
         and 'latencyState.cache.entries[id] = elapsed' in quick_success
-        and 'Other providers keep TTFT-only rankings.' in quick
+        and 'Any successful Quick Test duration is immediately' in quick
         and 'Self.latencySecondsKey' in quick_success
         and 'if !speedTestStatus.running { writeLatencyCache(readLatencyCache()) }' in quick_success,
     'new timeout and response-latency labels have English and both Chinese translations':
@@ -477,23 +477,21 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         assert(soft.latencyState.cache.entries["m0"] != nil && soft.latencyState.cache.errors["m0"] == nil)
         print("PASS: stale-success invalidation, soft failure and recovery")
 
-        // Today Quick Test measures the same completed-response latency as the
-        // picker, so its result is immediately reflected by the stable leaf and
-        // durable cache. Non-Today providers still do not mix full-response time
-        // into their TTFT ranking (covered by the `verified` case below).
+        // Quick Test measures completed response latency and immediately
+        // updates the stable leaf and durable cache for any provider.
         let liveToday = ChatOptimizer()
         liveToday.store.todayAccounts = ["today-live"]
         let liveTodayEntry = ModelEntry(id: "today-live-model", providerInstanceId: "today-live")
         liveToday.catalog = [liveTodayEntry]
         liveToday.latencyState.cache.entries[liveTodayEntry.id] = 8.1
         let liveTodayLeaf = liveToday.latencyState.entry(id: liveTodayEntry.id)
-        liveToday.recordSuccessfulTextQuickTest(entry: liveTodayEntry, elapsed: 6.5)
-        assert(liveTodayLeaf.result.seconds == 6.5)
-        assert(liveToday.latencyState.cache.entries[liveTodayEntry.id] == 6.5)
+        liveToday.recordSuccessfulTextQuickTest(entry: liveTodayEntry, elapsed: 4.0)
+        assert(liveTodayLeaf.result.seconds == 4.0)
+        assert(liveToday.latencyState.cache.entries[liveTodayEntry.id] == 4.0)
         let liveTodayDurable = try JSONDecoder().decode(ModelLatencyCache.self,
             from: liveToday.userDefaults.data(forKey: ChatOptimizerSettings.latencyCacheKey)!)
-        assert(liveTodayDurable.entries[liveTodayEntry.id] == 6.5)
-        print("PASS: Today Quick Test publishes completed latency to the live row and durable cache")
+        assert(liveTodayDurable.entries[liveTodayEntry.id] == 4.0)
+        print("PASS: Quick Test publishes completed latency to the live row and durable cache for all providers")
 
         // A successful TEXT smoke test clears only this entry's old failure.
         // It must not turn Quick Test's full-response duration into a TTFT rank.

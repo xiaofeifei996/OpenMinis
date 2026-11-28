@@ -179,9 +179,8 @@ final class TestSession: ObservableObject {
                     run.elapsed = Date().timeIntervalSince(start)
                     if case .text(let text) = state,
                        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        // Today measures completed-response latency, so this
-                        // Quick Test duration has the same meaning as its list
-                        // badge. Other providers keep TTFT-only rankings.
+                        // Any successful Quick Test duration is immediately
+                        // reflected by the model list badge and durable cache.
                         ChatOptimizer.shared.recordSuccessfulTextQuickTest(
                             entry: entry, elapsed: run.elapsed)
                     } else if case .text = state {

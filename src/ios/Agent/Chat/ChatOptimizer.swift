@@ -508,17 +508,14 @@ final class ChatOptimizer {
         LatencyProbePolicy(isToday: store.instance(for: entry.providerInstanceId)?.providerType == .today)
     }
 
-    /// A nonempty text Quick Test proves this entry worked. For Today, the
-    /// provider's metric is completed-response latency, so a sheet completion
-    /// can immediately replace the row's older value. Other providers measure
-    /// TTFT in the speed-test path; their full-response Quick Test duration
-    /// must not be inserted into that ranking.
+    /// A nonempty text Quick Test proves this entry worked. Whenever a Quick
+    /// Test completes successfully, write its measured duration directly to the
+    /// entry's latency cache so the model list reflects the fresh test instantly.
     func recordSuccessfulTextQuickTest(entry: ModelEntry, elapsed: TimeInterval? = nil) {
         let id = entry.id
         textValidationRevisions[id, default: 0] &+= 1
-        let isToday = store.instance(for: entry.providerInstanceId)?.providerType == .today
-        let measuredToday = isToday && elapsed.map { $0.isFinite && $0 > 0 } == true
-        if measuredToday, let elapsed {
+        let measuredElapsed = elapsed.map { $0.isFinite && $0 > 0 } == true
+        if measuredElapsed, let elapsed {
             latencyState.cache.entries[id] = elapsed
         }
         latencyState.cache.errors.removeValue(forKey: id)
@@ -526,7 +523,7 @@ final class ChatOptimizer {
         if latencyState.entry(id: id).result.phase == .finished { latencyState.publish(id: id) }
         if !speedTestStatus.running { writeLatencyCache(readLatencyCache()) }
         var info: [AnyHashable: Any] = [Self.latencyChangedIdsKey: [id]]
-        if measuredToday, let elapsed { info[Self.latencySecondsKey] = elapsed }
+        if measuredElapsed, let elapsed { info[Self.latencySecondsKey] = elapsed }
         NotificationCenter.default.post(name: Self.latencyUpdatedNotification, object: nil,
             userInfo: info)
     }

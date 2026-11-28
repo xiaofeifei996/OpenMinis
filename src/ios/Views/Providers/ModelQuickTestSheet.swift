@@ -177,6 +177,16 @@ final class TestSession: ObservableObject {
                 do {
                     let state = try await Self.performTest(kind, entry: entry)
                     run.elapsed = Date().timeIntervalSince(start)
+                    if case .text(let text) = state,
+                       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        // Today measures completed-response latency, so this
+                        // Quick Test duration has the same meaning as its list
+                        // badge. Other providers keep TTFT-only rankings.
+                        ChatOptimizer.shared.recordSuccessfulTextQuickTest(
+                            entry: entry, elapsed: run.elapsed)
+                    } else if case .text = state {
+                        ChatOptimizer.shared.recordSuccessfulTextQuickTest(entry: entry)
+                    }
                     run.state = state
                     qtLog.info("[QuickTest] OK model=\(entry.model.id) kind=\(kind.rawValue) in \(String(format: "%.1f", run.elapsed))s")
                 } catch {
@@ -192,7 +202,13 @@ final class TestSession: ObservableObject {
 
     /// Exposed as `performTestStatic` for the debug server Quick Test endpoint.
     static func performTestStatic(_ kind: ModelQuickTestSheet.Kind, entry: ModelEntry) async throws -> TestRun.State {
-        try await performTest(kind, entry: entry)
+        let state = try await performTest(kind, entry: entry)
+        // Keep the debug endpoint's historical validation side effect, while the
+        // sheet's live path below also supplies the completed-response duration.
+        if case .text(let text) = state, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            ChatOptimizer.shared.recordSuccessfulTextQuickTest(entry: entry)
+        }
+        return state
     }
     /// [T-quicktest-opencode-session] A Quick Test belongs to no chat, so it
     /// used to build its provider with no session id. OpenCode Go routes by
@@ -233,8 +249,7 @@ final class TestSession: ObservableObject {
             }
             try Task.checkCancellation()
             let text = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !text.isEmpty { ChatOptimizer.shared.recordSuccessfulTextQuickTest(entry: entry) }
-            return .text(text.isEmpty ? AppLocalized("(empty reply)") : text)
+            return .text(text)
 
         case .imageGen:
             let provider = try await quickTestProvider(for: entry)
@@ -492,7 +507,8 @@ private struct TestCard: View {
             Text("Testing…").font(.caption).foregroundStyle(.secondary)
 
         case .text(let reply):
-            Text(reply).font(.subheadline).textSelection(.enabled)
+            Text(reply.isEmpty ? AppLocalized("(empty reply)") : reply)
+                .font(.subheadline).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
         case .image(let data):

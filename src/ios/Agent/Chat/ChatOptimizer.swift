@@ -228,7 +228,8 @@ struct LatencyProbe: Sendable {
 
 struct LatencyProbePolicy {
     let isToday: Bool
-    var accountLimit: Int { isToday ? 1 : 2 }
+    // Keep each provider instance serial; the global policy controls fan-out.
+    var accountLimit: Int { 1 }
     var timeout: TimeInterval { isToday ? TodayCompletionPolicy.latencyProbeTimeout : 12 }
 }
 
@@ -507,18 +508,27 @@ final class ChatOptimizer {
         LatencyProbePolicy(isToday: store.instance(for: entry.providerInstanceId)?.providerType == .today)
     }
 
-    /// A nonempty text Quick Test proves this entry worked, not its TTFT.
-    /// Clear stale failures without inserting its full-response elapsed time
-    /// into the latency rankings, or touching other entries/modality results.
-    func recordSuccessfulTextQuickTest(entry: ModelEntry) {
+    /// A nonempty text Quick Test proves this entry worked. For Today, the
+    /// provider's metric is completed-response latency, so a sheet completion
+    /// can immediately replace the row's older value. Other providers measure
+    /// TTFT in the speed-test path; their full-response Quick Test duration
+    /// must not be inserted into that ranking.
+    func recordSuccessfulTextQuickTest(entry: ModelEntry, elapsed: TimeInterval? = nil) {
         let id = entry.id
         textValidationRevisions[id, default: 0] &+= 1
+        let isToday = store.instance(for: entry.providerInstanceId)?.providerType == .today
+        let measuredToday = isToday && elapsed.map { $0.isFinite && $0 > 0 } == true
+        if measuredToday, let elapsed {
+            latencyState.cache.entries[id] = elapsed
+        }
         latencyState.cache.errors.removeValue(forKey: id)
         latencyState.cache.unavailable.removeAll { $0 == id }
         if latencyState.entry(id: id).result.phase == .finished { latencyState.publish(id: id) }
         if !speedTestStatus.running { writeLatencyCache(readLatencyCache()) }
+        var info: [AnyHashable: Any] = [Self.latencyChangedIdsKey: [id]]
+        if measuredToday, let elapsed { info[Self.latencySecondsKey] = elapsed }
         NotificationCenter.default.post(name: Self.latencyUpdatedNotification, object: nil,
-            userInfo: [Self.latencyChangedIdsKey: [id]])
+            userInfo: info)
     }
 
     /// Measure response latency for one entry using a tiny prompt.
@@ -694,7 +704,7 @@ final class ChatOptimizer {
         await speedTestAll(sessionId: sessionId, instanceId: instanceId)
     }
 
-    func speedTestAll(sessionId: String?, concurrency: Int = 4, perEntryTimeout: TimeInterval? = nil,
+    func speedTestAll(sessionId: String?, concurrency: Int = 6, perEntryTimeout: TimeInterval? = nil,
                       includeAllAccounts: Bool = false, instanceId: String? = nil,
                       progress: ((Int, Int) -> Void)? = nil) async {
         guard !Task.isCancelled else { return }
@@ -758,7 +768,7 @@ final class ChatOptimizer {
         var done = 0
         let globalLimit = min(6, max(1, concurrency))
         ModelLatencyDiagnostics.shared.record("scheduler-policy",
-            source: "global:\(globalLimit),account:2,today:1", delayMs: perEntryTimeout.map { $0 * 1000 })
+            source: "global:\(globalLimit),account:1,today:1", delayMs: perEntryTimeout.map { $0 * 1000 })
         var completedByInstance: [String: Int] = [:]
         var totalsByInstance: [String: Int] = [:]
         var skippedByInstance: [String: Int] = [:]

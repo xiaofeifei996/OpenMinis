@@ -169,8 +169,8 @@ final class ModelLatencyState {
     private func result(id: String) -> ModelLatencyResult {
         ModelLatencyResult(seconds: cache.entries[id], error: cache.errors[id])
     }
-    func enqueue(id: String) {
-        entry(id: id).update(ModelLatencyResult(seconds: nil, error: nil, phase: .queued))
+    func enqueue(id: String, error: String? = nil) {
+        entry(id: id).update(ModelLatencyResult(seconds: nil, error: error, phase: .queued))
         ModelLatencyDiagnostics.shared.record("queued", id: id, phase: .queued)
     }
     func start(id: String, at date: Date) {
@@ -827,7 +827,7 @@ final class ChatOptimizer {
         func publish(id: String, seconds: Double?, error: String?, queued: Bool = false) {
             // The canonical cache was already mutated on MainActor. Publish only
             // this entry, not a copy of the full dictionary to every List leaf.
-            if queued { latencyState.enqueue(id: id) }
+            if queued { latencyState.enqueue(id: id, error: error) }
             else { latencyState.publish(id: id) }
             // [T-speedtest-live-update] Put ONLY the non-nil value in the payload.
             //
@@ -840,7 +840,7 @@ final class ChatOptimizer {
             var info: [AnyHashable: Any] = [ChatOptimizer.latencyChangedIdsKey: [id]]
             if let seconds {
                 info[ChatOptimizer.latencySecondsKey] = seconds
-            } else if let error {
+            if let error {
                 info[ChatOptimizer.latencyErrorKey] = error
             }
             NotificationCenter.default.post(
@@ -889,10 +889,11 @@ final class ChatOptimizer {
                 while inFlight < globalLimit, let entry = nextReady() {
                     queue.removeAll { $0.id == entry.id }
                     // A provider still returning 429 after its one retry is
-                    // skipped for this run. Count every skipped row, not 17/100
-                    // forever, and leave its existing badge untouched.
+                    // skipped for this run. Keep cached latency as history, but
+                    // visibly label it as stale due to account throttling.
                     if exhaustedAccounts.contains(entry.providerInstanceId) {
-                        latencyState.finishPending(id: entry.id)
+                        latencyState.cache.errors[entry.id] = "Rate limited"
+                        publish(id: entry.id, seconds: latencyState.cache.entries[entry.id], error: "Rate limited")
                         complete(entry.providerInstanceId, skipped: true)
                         reportProgress()
                         continue
@@ -950,9 +951,11 @@ final class ChatOptimizer {
                     reportProgress()
                     publish(id: id, seconds: lat, error: nil)
                 } else if Self.isThrottle(probe) {
-                    // Keep a known latency on account throttles. It is not a
-                    // model defect, and must not erase a working model's badge.
-                    latencyState.cache.errors.removeValue(forKey: id)
+                    // Keep a known latency as historical data, but publish a
+                    // normalized throttle status so the UI never presents it as
+                    // a fresh successful probe. Throttling is not a model defect.
+                    let throttleMessage = "Rate limited"
+                    latencyState.cache.errors[id] = throttleMessage
                     var queuedForRetry = false
                     if probe.retryAllowed, !exhaustedAccounts.contains(providerId), !retried.contains(id),
                        let original = entries.first(where: { $0.id == id }) {
@@ -970,7 +973,7 @@ final class ChatOptimizer {
                         reportProgress()
                     }
                     logger.info("[latency] \(providerId.prefix(8)) throttled; \(queue.count) pending")
-                    publish(id: id, seconds: latencyState.cache.entries[id], error: nil, queued: queuedForRetry)
+                    publish(id: id, seconds: latencyState.cache.entries[id], error: throttleMessage, queued: queuedForRetry)
                 } else {
                     // [T-speedtest-soft-fail] A failed speed test is NOT proof the
                     // model is unusable — transient network/auth blips would wrongly

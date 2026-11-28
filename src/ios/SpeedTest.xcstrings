@@ -73,6 +73,22 @@
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "尚未測量延遲" } }
       }
     },
+    "Rate limited" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Rate limited" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "当前限流" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "目前受到速率限制" } }
+      }
+    },
+    "Rate limited; last successful latency: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Rate limited; last successful latency: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "当前限流；上次成功延迟：%@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "目前受到速率限制；上次成功延遲：%@" } }
+      }
+    },
     "Latency test running" : {
       "extractionState" : "manual",
       "localizations" : {

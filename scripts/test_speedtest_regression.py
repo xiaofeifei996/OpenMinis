@@ -33,10 +33,18 @@ checks = {
         and 'Any successful Quick Test duration is immediately' in quick
         and 'Self.latencySecondsKey' in quick_success
         and 'if !speedTestStatus.running { writeLatencyCache(readLatencyCache()) }' in quick_success,
-    'new timeout and response-latency labels have English and both Chinese translations':
+    'new timeout, latency and rate-limit labels have English and both Chinese translations':
         all(strings.get(key, {}).get('localizations', {}).get(locale, {}).get('stringUnit', {}).get('value')
-            for key in ['Timed out', 'Speed test timed out; model availability is unknown', 'Response latency: %@']
+            for key in ['Timed out', 'Speed test timed out; model availability is unknown', 'Response latency: %@',
+                        'Rate limited', 'Rate limited; last successful latency: %@']
             for locale in ['en', 'zh-Hans', 'zh-Hant']),
+    'throttle never presents a cached latency as a fresh success':
+        'latencyState.cache.errors[id] = throttleMessage' in source
+        and 'latencyState.cache.errors[entry.id] = "Rate limited"' in source
+        and 'if isRateLimited {' in picker
+        and picker.index('if isRateLimited {') < picker.index('} else if let text {')
+        and 'Rate limited; last successful latency: ' in picker
+        and 'latencyState.enqueue(id: id, error: error)' in source,
     'no real-time numeric stopwatch in the picker':
         'TimelineView(' not in picker and 'func elapsed(' not in source
         and 'case running(startedAt:' not in source,
@@ -552,8 +560,9 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         await delivered.speedTestAll(sessionId: nil, includeAllAccounts: true)
         assert(delivered.starts["paid0"] == 1 && delivered.starts.count == 2)
         assert(delivered.speedTestStatus.instances["today"]?.skipped == 11)
-        assert(delivered.latencyState.cache.errors.isEmpty)
-        assert(delivered.latencyState.cache.entries["healthy"] != nil)
+        assert(delivered.latencyState.cache.errors["paid0"] == "Rate limited")
+        assert(delivered.latencyState.cache.errors["healthy"] == nil)
+        assert(delivered.latencyState.cache.unavailable.isEmpty)
         print("PASS: delivered Today polling throttle never resends generation, skips account safely, other account completes")
 
         // Permanently rate-limited account is retried once after cooldown, then
@@ -575,7 +584,10 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         assert(throttled.speedTestStatus.running)
         await throttleRun.value
         assert(throttled.maxAccount <= 1 && throttled.starts.values.allSatisfy { $0 <= 2 })
-        assert(throttled.latencyState.cache.errors.isEmpty && throttled.latencyState.cache.unavailable.isEmpty)
+        assert(throttled.latencyState.cache.errors["bad0"] == "Rate limited")
+        assert((1..<6).allSatisfy { throttled.latencyState.cache.errors["bad\($0)"] == "Rate limited" })
+        assert(throttled.latencyState.cache.errors["safeToday0"] == "Rate limited")
+        assert(throttled.latencyState.cache.unavailable.isEmpty)
         assert(throttled.latencyState.cache.entries["bad0"] == 1.2)
         assert(finalProgress.0 == 11 && finalProgress.1 == 11 && throttled.speedTestStatus.skipped > 0)
         assert(throttled.maxByAccount["safe-today"] == 1 && throttled.starts["safeToday0"] == 2)

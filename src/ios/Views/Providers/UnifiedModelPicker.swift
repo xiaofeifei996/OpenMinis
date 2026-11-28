@@ -1662,11 +1662,15 @@ struct UnifiedModelPicker: View {
                         .frame(width: 18, height: 18)
                         .accessibilityLabel(Text("Latency test running", tableName: "SpeedTest"))
                 } else if state.result.phase == .queued {
-                    Image(systemName: "clock")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 18)
-                        .accessibilityLabel(Text("Latency test queued", tableName: "SpeedTest"))
+                    if isRateLimited {
+                        rateLimitedBadge
+                    } else {
+                        Image(systemName: "clock")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 18)
+                            .accessibilityLabel(Text("Latency test queued", tableName: "SpeedTest"))
+                    }
                 } else {
                     finishedBadge
                 }
@@ -1685,11 +1689,34 @@ struct UnifiedModelPicker: View {
             }
         }
 
+        private var isRateLimited: Bool {
+            let error = state.result.error?.lowercased() ?? ""
+            return error.contains("rate limited") || error.contains("rate limit")
+                || error.contains("429") || error.contains("too many requests")
+        }
+
+        private var rateLimitedBadge: some View {
+            HStack(spacing: 2) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                Text("429")
+            }
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(.orange)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                state.result.seconds.map {
+                    Text("Rate limited; last successful latency: \(String(format: "%.1fs", $0))", tableName: "SpeedTest")
+                } ?? Text("Rate limited", tableName: "SpeedTest")
+            )
+        }
+
         private var finishedBadge: some View {
             let text = state.result.seconds.map { String(format: "%.1fs", $0) }
             let failed = state.result.error != nil && text == nil
             return Group {
-                if let text {
+                if isRateLimited {
+                    rateLimitedBadge
+                } else if let text {
                     Text(text)
                         .font(.system(size: 9, weight: .medium))
                         .monospacedDigit()

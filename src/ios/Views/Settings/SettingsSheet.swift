@@ -45,6 +45,10 @@ struct SettingsSheet: View {
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
     @State private var navPath = NavigationPath()
     @State private var showFeedbackDialog = false
+    // [T-optimize-prompt] Chat auto-helper switches.
+    @AppStorage("chatOptimizer.autoPickFastest") private var autoPickFastest = false
+    @AppStorage("chatOptimizer.autoSwitchUnavailable") private var autoSwitchUnavailable = true
+    @AppStorage("chatOptimizer.autoRetryOnTimeout") private var autoRetryOnTimeout = false
 
     var body: some View {
         NavigationStack(path: $navPath) {
@@ -195,6 +199,49 @@ struct SettingsSheet: View {
                                 .background(.green, in: Circle())
                         }
                     }
+                }
+
+                // [T-optimize-prompt] Chat auto-helpers: the prompt-rewrite
+                // button lives in the composer (always on); these three switches
+                // control auto-pick fastest / auto-switch / auto-retry.
+                Section {
+                    Toggle(isOn: $autoPickFastest) {
+                        Label {
+                            Text(AppLocalized("Speed-test and pick the fastest model"))
+                        } icon: {
+                            Image(systemName: "speedometer")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white)
+                                .frame(width: 21, height: 21)
+                                .background(.orange, in: Circle())
+                        }
+                    }
+                    Toggle(isOn: $autoSwitchUnavailable) {
+                        Label {
+                            Text(AppLocalized("Switch model when unavailable"))
+                        } icon: {
+                            Image(systemName: "arrow.triangle.swap")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white)
+                                .frame(width: 21, height: 21)
+                                .background(.teal, in: Circle())
+                        }
+                    }
+                    Toggle(isOn: $autoRetryOnTimeout) {
+                        Label {
+                            Text(AppLocalized("Retry after 10s without a reply"))
+                        } icon: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white)
+                                .frame(width: 21, height: 21)
+                                .background(.blue, in: Circle())
+                        }
+                    }
+                } header: {
+                    Text("Chat Auto-Helpers")
+                } footer: {
+                    Text("The rewrite button beside the composer turns your text into a clearer prompt. Speed testing measures each model's first-token latency so this page and the model picker can show it.")
                 }
 
                 Section("Storage") {

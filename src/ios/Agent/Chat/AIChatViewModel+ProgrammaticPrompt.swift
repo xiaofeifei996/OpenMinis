@@ -542,13 +542,9 @@ extension AIChatViewModel {
             return nil
         }
         var out = history
-        out[lastIdx] = AgentMessage(
-            role: history[lastIdx].role,
-            parts: parts,
-            isInterrupted: history[lastIdx].isInterrupted,
-            reasoningContent: history[lastIdx].reasoningContent,
-            reasoningEcho: history[lastIdx].reasoningEcho,
-            dbMessageId: history[lastIdx].dbMessageId)
+        // Preserve transient attachment authorization and UI identity as well
+        // as reasoning/DB metadata when only the request text changes.
+        out[lastIdx].parts = parts
         return out
     }
 

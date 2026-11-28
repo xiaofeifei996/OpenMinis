@@ -363,6 +363,7 @@
 		E5L200SS4 /* SessionsOffloadBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5L200SS3 /* SessionsOffloadBridge.swift */; };
 		E5LC00001 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = E5LC00002 /* Localizable.xcstrings */; };
 		E5LC00003 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = E5LC00002 /* Localizable.xcstrings */; };
+		E5ST00001 /* SpeedTest.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = E5ST00002 /* SpeedTest.xcstrings */; };
 		E5LD00001 /* ToolLoopDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5LD00003 /* ToolLoopDetector.swift */; };
 		E5LOCK001 /* SessionLockStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5LOCK101 /* SessionLockStore.swift */; };
 		E5LOCK002 /* FaceIDProtectionSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5LOCK102 /* FaceIDProtectionSettingsView.swift */; };
@@ -513,6 +514,7 @@
 		E5VMB0003 /* AIChatViewModel+Misc.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMB0013 /* AIChatViewModel+Misc.swift */; };
 		E5VMB0004 /* AIChatViewModel+RequestBudget.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMB0014 /* AIChatViewModel+RequestBudget.swift */; };
 		E5VMB0005 /* ChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMB0015 /* ChatModels.swift */; };
+		E5CHOPT0001 /* ChatOptimizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5CHOPT0011 /* ChatOptimizer.swift */; };
 		E5VMB0006 /* ChatLifecycleSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMB0016 /* ChatLifecycleSupport.swift */; };
 		E5VMB0007 /* ChatURLBrokerage.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMB0017 /* ChatURLBrokerage.swift */; };
 		E5VMC0001 /* AIChatViewModel+ISHCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMC0011 /* AIChatViewModel+ISHCommand.swift */; };
@@ -619,6 +621,18 @@
 		RCL000119 /* BackupHistoryDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = RCL000219 /* BackupHistoryDetailView.swift */; };
 		RCL000120 /* BackupCategoryIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = RCL000220 /* BackupCategoryIcon.swift */; };
 		RCL000121 /* BackupHUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = RCL000221 /* BackupHUD.swift */; };
+		D0A0B0C0D0E0F00100000001 /* WorkBuddyChinaOAuthFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F00100000002 /* WorkBuddyChinaOAuthFlow.swift */; };
+		D0A0B0C0D0E0F00200000001 /* WorkBuddyChinaOAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F00200000002 /* WorkBuddyChinaOAuthManager.swift */; };
+		D0A0B0C0D0E0F00300000001 /* RaccoonOAuthFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F00300000002 /* RaccoonOAuthFlow.swift */; };
+		D0A0B0C0D0E0F00400000001 /* RaccoonOAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F00400000002 /* RaccoonOAuthManager.swift */; };
+		D0A0B0C0D0E0F00500000001 /* AutoClawAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F00500000002 /* AutoClawAPI.swift */; };
+		D0A0B0C0D0E0F00600000001 /* AutoClawAccountManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F00600000002 /* AutoClawAccountManager.swift */; };
+		D0A0B0C0D0E0F00700000001 /* AutoClawLoginSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F00700000002 /* AutoClawLoginSheet.swift */; };
+		D0A0B0C0D0E0F01000000001 /* TraeAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F01000000002 /* TraeAPI.swift */; };
+		D0A0B0C0D0E0F01100000001 /* TraeSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F01100000002 /* TraeSignIn.swift */; };
+		D0A0B0C0D0E0F01200000001 /* TraeAccountManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F01200000002 /* TraeAccountManager.swift */; };
+		D0A0B0C0D0E0F01300000001 /* TraeStreamDialect.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F01300000002 /* TraeStreamDialect.swift */; };
+		D0A0B0C0D0E0F01400000001 /* WorkBuddyRegion.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A0B0C0D0E0F01400000002 /* WorkBuddyRegion.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1188,6 +1202,7 @@
 		E5L200SS1 /* SessionsOffload.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SessionsOffload.m; sourceTree = "<group>"; };
 		E5L200SS3 /* SessionsOffloadBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsOffloadBridge.swift; sourceTree = "<group>"; };
 		E5LC00002 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
+		E5ST00002 /* SpeedTest.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = SpeedTest.xcstrings; sourceTree = "<group>"; };
 		E5LD00003 /* ToolLoopDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolLoopDetector.swift; sourceTree = "<group>"; };
 		E5LOCK101 /* SessionLockStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLockStore.swift; sourceTree = "<group>"; };
 		E5LOCK102 /* FaceIDProtectionSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaceIDProtectionSettingsView.swift; sourceTree = "<group>"; };
@@ -1334,6 +1349,7 @@
 		E5VMB0013 /* AIChatViewModel+Misc.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+Misc.swift"; sourceTree = "<group>"; };
 		E5VMB0014 /* AIChatViewModel+RequestBudget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+RequestBudget.swift"; sourceTree = "<group>"; };
 		E5VMB0015 /* ChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModels.swift; sourceTree = "<group>"; };
+		E5CHOPT0011 /* ChatOptimizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatOptimizer.swift; sourceTree = "<group>"; };
 		E5VMB0016 /* ChatLifecycleSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatLifecycleSupport.swift; sourceTree = "<group>"; };
 		E5VMB0017 /* ChatURLBrokerage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatURLBrokerage.swift; sourceTree = "<group>"; };
 		E5VMC0011 /* AIChatViewModel+ISHCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+ISHCommand.swift"; sourceTree = "<group>"; };
@@ -1441,6 +1457,18 @@
 		RCL000219 /* BackupHistoryDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupHistoryDetailView.swift; sourceTree = "<group>"; };
 		RCL000220 /* BackupCategoryIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupCategoryIcon.swift; sourceTree = "<group>"; };
 		RCL000221 /* BackupHUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupHUD.swift; sourceTree = "<group>"; };
+		D0A0B0C0D0E0F00100000002 /* WorkBuddyChinaOAuthFlow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkBuddyChinaOAuthFlow.swift; sourceTree = "<group>"; };
+		D0A0B0C0D0E0F00200000002 /* WorkBuddyChinaOAuthManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkBuddyChinaOAuthManager.swift; sourceTree = "<group>"; };
+		D0A0B0C0D0E0F00300000002 /* RaccoonOAuthFlow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RaccoonOAuthFlow.swift; sourceTree = "<group>"; };
+		D0A0B0C0D0E0F00400000002 /* RaccoonOAuthManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RaccoonOAuthManager.swift; sourceTree = "<group>"; };
+		D0A0B0C0D0E0F00500000002 /* AutoClawAPI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AutoClawAPI.swift; sourceTree = "<group>"; };
+		D0A0B0C0D0E0F00600000002 /* AutoClawAccountManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AutoClawAccountManager.swift; sourceTree = "<group>"; };
+		D0A0B0C0D0E0F00700000002 /* AutoClawLoginSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AutoClawLoginSheet.swift; sourceTree = "<group>"; };
+		D0A0B0C0D0E0F01000000002 /* TraeAPI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TraeAPI.swift; sourceTree = "<group>"; };
+		D0A0B0C0D0E0F01100000002 /* TraeSignIn.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TraeSignIn.swift; sourceTree = "<group>"; };
+		D0A0B0C0D0E0F01200000002 /* TraeAccountManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TraeAccountManager.swift; sourceTree = "<group>"; };
+		D0A0B0C0D0E0F01300000002 /* TraeStreamDialect.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TraeStreamDialect.swift; sourceTree = "<group>"; };
+		D0A0B0C0D0E0F01400000002 /* WorkBuddyRegion.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkBuddyRegion.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -1699,6 +1727,7 @@
 				E5E000018 /* Minis.entitlements */,
 				E5PV00002 /* PrivacyInfo.xcprivacy */,
 				E5LC00002 /* Localizable.xcstrings */,
+				E5ST00002 /* SpeedTest.xcstrings */,
 				E5IP00010 /* InfoPlist.strings */,
 				E5AS00010 /* AppShortcuts.strings */,
 				E5A000011 /* default_mount */,
@@ -1784,6 +1813,10 @@
 				E7A000030 /* OpenRouter */,
 				EXA000030 /* xAI */,
 				42A3821DABA8773E8A5BA57E /* Voice */,
+				D0A0B0C0D0E0F00100000003 /* WorkBuddy */,
+				D0A0B0C0D0E0F00300000003 /* Raccoon */,
+				D0A0B0C0D0E0F00500000003 /* AutoClaw */,
+				D0A0B0C0D0E0F01300000003 /* Trae */,
 			);
 			path = Providers;
 			sourceTree = "<group>";
@@ -2363,6 +2396,7 @@
 				E5VMB0013 /* AIChatViewModel+Misc.swift */,
 				E5VMB0014 /* AIChatViewModel+RequestBudget.swift */,
 				E5VMB0015 /* ChatModels.swift */,
+				E5CHOPT0011 /* ChatOptimizer.swift */,
 				E5VMB0016 /* ChatLifecycleSupport.swift */,
 				E5ITL0011 /* IdleTimerLease.swift */,
 				E5AJS0011 /* AOJITShellStats.swift */,
@@ -2636,6 +2670,7 @@
 			children = (
 				E5D00032 /* AddProviderView.swift */,
 				E5KIMIUI2 /* KimiDeviceLoginSheet.swift */,
+				D0A0B0C0D0E0F00700000002 /* AutoClawLoginSheet.swift */,
 				E5D00038 /* AgentLoopModelsView.swift */,
 				E5D00034 /* ModelGroupDetailView.swift */,
 				E5D00033 /* ModelGroupsView.swift */,
@@ -2706,6 +2741,45 @@
 				F1VMCP04 /* SessionMCPsView.swift */,
 			);
 			path = MCP;
+			sourceTree = "<group>";
+		};
+		D0A0B0C0D0E0F00100000003 /* WorkBuddy */ = {
+			isa = PBXGroup;
+			children = (
+				D0A0B0C0D0E0F00100000002 /* WorkBuddyChinaOAuthFlow.swift */,
+				D0A0B0C0D0E0F00200000002 /* WorkBuddyChinaOAuthManager.swift */,
+				D0A0B0C0D0E0F01400000002 /* WorkBuddyRegion.swift */,
+			);
+			path = WorkBuddy;
+			sourceTree = "<group>";
+		};
+		D0A0B0C0D0E0F00300000003 /* Raccoon */ = {
+			isa = PBXGroup;
+			children = (
+				D0A0B0C0D0E0F00300000002 /* RaccoonOAuthFlow.swift */,
+				D0A0B0C0D0E0F00400000002 /* RaccoonOAuthManager.swift */,
+			);
+			path = Raccoon;
+			sourceTree = "<group>";
+		};
+		D0A0B0C0D0E0F01300000003 /* Trae */ = {
+			isa = PBXGroup;
+			children = (
+				D0A0B0C0D0E0F01000000002 /* TraeAPI.swift */,
+				D0A0B0C0D0E0F01100000002 /* TraeSignIn.swift */,
+				D0A0B0C0D0E0F01200000002 /* TraeAccountManager.swift */,
+				D0A0B0C0D0E0F01300000002 /* TraeStreamDialect.swift */,
+			);
+			path = Trae;
+			sourceTree = "<group>";
+		};
+		D0A0B0C0D0E0F00500000003 /* AutoClaw */ = {
+			isa = PBXGroup;
+			children = (
+				D0A0B0C0D0E0F00500000002 /* AutoClawAPI.swift */,
+				D0A0B0C0D0E0F00600000002 /* AutoClawAccountManager.swift */,
+			);
+			path = AutoClaw;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -2972,6 +3046,7 @@
 				E51000003 /* Assets.xcassets in Resources */,
 				E5PV00001 /* PrivacyInfo.xcprivacy in Resources */,
 				E5LC00001 /* Localizable.xcstrings in Resources */,
+				E5ST00001 /* SpeedTest.xcstrings in Resources */,
 				E5IP00001 /* InfoPlist.strings in Resources */,
 				E5AS00001 /* AppShortcuts.strings in Resources */,
 				E5Q000002 /* cl100k_base.tiktoken in Resources */,
@@ -3087,6 +3162,18 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D0A0B0C0D0E0F00200000001 /* WorkBuddyChinaOAuthManager.swift in Sources */,
+				D0A0B0C0D0E0F01400000001 /* WorkBuddyRegion.swift in Sources */,
+				D0A0B0C0D0E0F00100000001 /* WorkBuddyChinaOAuthFlow.swift in Sources */,
+				D0A0B0C0D0E0F00300000001 /* RaccoonOAuthFlow.swift in Sources */,
+				D0A0B0C0D0E0F00400000001 /* RaccoonOAuthManager.swift in Sources */,
+				D0A0B0C0D0E0F00500000001 /* AutoClawAPI.swift in Sources */,
+				D0A0B0C0D0E0F00600000001 /* AutoClawAccountManager.swift in Sources */,
+				D0A0B0C0D0E0F00700000001 /* AutoClawLoginSheet.swift in Sources */,
+				D0A0B0C0D0E0F01000000001 /* TraeAPI.swift in Sources */,
+				D0A0B0C0D0E0F01100000001 /* TraeSignIn.swift in Sources */,
+				D0A0B0C0D0E0F01200000001 /* TraeAccountManager.swift in Sources */,
+				D0A0B0C0D0E0F01300000001 /* TraeStreamDialect.swift in Sources */,
 				AC0000202 /* ProviderCustomizationGenerated.swift in Sources */,
 				E54000AC1 /* DebugSkillGenerated.swift in Sources */,
 				E5FP00100 /* AppGroupChangeWatcher.swift in Sources */,
@@ -3171,6 +3258,7 @@
 				E5VMSPL005B /* AIChatViewModel+AutoPlayAudio.swift in Sources */,
 				E5VMSPL006B /* AIChatViewModel+SystemPrompt.swift in Sources */,
 				E5VMSPL007B /* AIChatViewModel+Send.swift in Sources */,
+				E5CHOPT0001 /* ChatOptimizer.swift in Sources */,
 				E5VMSPL008B /* AIChatViewModel+Rerun.swift in Sources */,
 				E5VMSPL009B /* AIChatViewModel+EditMessage.swift in Sources */,
 				E5VMSPL010B /* AIChatViewModel+Cancel.swift in Sources */,

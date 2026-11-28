@@ -606,7 +606,9 @@ struct ChatMessageRow: View {
             // Typing indicator — "request out, nothing back yet", evaluated per
             // ROUND. See `ChatMessage.shouldShowTypingIndicator`.
             if isActiveMessage && message.shouldShowTypingIndicator {
-                TypingIndicator()
+                TypingIndicator(startedAt: message.modelWaitStartedAt,
+                                phase: message.modelWaitPhase,
+                                retryCountdown: autoRetryCountdown)
             }
 
             // Inline error + retry

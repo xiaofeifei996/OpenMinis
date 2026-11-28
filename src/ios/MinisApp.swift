@@ -558,6 +558,12 @@ struct MinisApp: App {
                 CrashReporter.shared.updateMarkerPhase(phase: "active")
 
                 _ = SessionBadgeStore.shared
+                // [T-optimize-prompt] Background speed test of all available
+                // models so the model picker can show latency badges and
+                // auto-pick-fastest has data. Non-blocking: it runs in its own
+                // Task and writes the cache; if it fails (offline) it simply
+                // leaves the cache empty and the picker shows no badge.
+                Task { await ChatOptimizer.shared.ensureLatencyDataOnce(sessionId: nil) }
                 // [T-ios-session-paused-badge-hardkill] Reconcile .paused badges
                 // against the DB's interrupted-session set. The background-expiry
                 // push only fires on a graceful task expiry; a hard kill (jetsam/
@@ -813,6 +819,23 @@ struct MinisApp: App {
     }
 
     private static func registerFileProviderDomain() {
+        // A re-signed app can access its private fallback but an extension
+        // cannot share that sandbox. Do not register/reset a domain that has
+        // no shared container, or count it as an extension boot failure.
+        guard FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.com.openminis.app"
+        ) != nil else {
+            let root = AIChatViewModel.minisAppGroupRoot
+            for sub in ["memory", "skills", "shared"] {
+                try? FileManager.default.createDirectory(
+                    at: root.appendingPathComponent(sub, isDirectory: true),
+                    withIntermediateDirectories: true)
+            }
+            SoulStore.ensureExists()
+            SoulStore.refreshCache()
+            lifecycleLog.warning("[FileProvider] App Group unavailable; using local storage without domain registration")
+            return
+        }
         logAppUpdateMarkerForFPTrace()
 
         // [T-ios-fp-mac-bootcrash] Circuit breaker, NOT a blanket disable.
@@ -1177,10 +1200,13 @@ struct MinisApp: App {
     /// 4. Old App Group MinisShared/ → App Group MinisFileProvider/shared/
     private static func migrateSharedDirToAppGroup() {
         let fm = FileManager.default
-        let library = fm.urls(for: .libraryDirectory, in: .userDomainMask).first!
-        let container = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.openminis.app")!
+        guard let library = fm.urls(for: .libraryDirectory, in: .userDomainMask).first else { return }
+        let container = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.openminis.app")
 
-        let migrations: [(source: URL, dest: URL, label: String)] = [
+        // Destination helpers already resolve to persistent app-local storage
+        // when re-signing removes the App Group entitlement. Keep migrating
+        // legacy Library data there; only the old group source is optional.
+        var migrations: [(source: URL, dest: URL, label: String)] = [
             // Legacy Library/MinisChat/shared → new shared
             (library.appendingPathComponent("MinisChat/shared", isDirectory: true),
              AIChatViewModel.minisSharedPersistentDir, "shared"),
@@ -1190,10 +1216,11 @@ struct MinisApp: App {
             // Legacy Library/MinisChat/skills → new skills
             (library.appendingPathComponent("MinisChat/skills", isDirectory: true),
              AIChatViewModel.minisSkillsPersistentDir, "skills"),
-            // Old App Group MinisShared → new shared
-            (container.appendingPathComponent("MinisShared", isDirectory: true),
-             AIChatViewModel.minisSharedPersistentDir, "MinisShared→shared"),
         ]
+        if let container {
+            migrations.append((container.appendingPathComponent("MinisShared", isDirectory: true),
+                               AIChatViewModel.minisSharedPersistentDir, "MinisShared→shared"))
+        }
 
         for migration in migrations {
             guard fm.fileExists(atPath: migration.source.path) else { continue }
@@ -1206,10 +1233,11 @@ struct MinisApp: App {
                 }
             }
             // Remove old directory if empty
-            if (try? fm.contentsOfDirectory(at: migration.source, includingPropertiesForKeys: nil))?.isEmpty ?? true {
+            if let remaining = try? fm.contentsOfDirectory(at: migration.source, includingPropertiesForKeys: nil),
+               remaining.isEmpty {
                 try? fm.removeItem(at: migration.source)
             }
-            lifecycleLog.info("[FileProvider] migrated \(migration.label) to App Group")
+            lifecycleLog.info("[FileProvider] migration checked \(migration.label) at \(migration.dest.path)")
         }
     }
 

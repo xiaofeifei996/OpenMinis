@@ -1292,14 +1292,10 @@ private struct ThinkingBodyHeightKey: PreferenceKey {
 // MARK: - Typing Indicator
 
 struct TypingIndicator: View {
-    @State private var dotOffsets: [Bool] = [false, false, false]
-    /// Live Soul name so the indicator reads "<custom name> is thinking…" when
-    /// the user has renamed the assistant in Soul settings. Updates via
-    /// `.soulMdChanged` Notification — same wiring used by `AssistantSoulName`.
-    @State private var soulName: String = {
-        let n = SoulStore.cachedMetadata.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return n.isEmpty ? "Minis" : n
-    }()
+    var startedAt: Date? = nil
+    var phase: String? = nil
+    var retryCountdown: Int = 0
+    @State private var appearedAt = Date()
 
     var body: some View {
         // The thinking-level badge that used to trail this indicator was
@@ -1307,31 +1303,32 @@ struct TypingIndicator: View {
         // the single place that shows and changes the thinking level, so a
         // duplicate here was redundant. ThinkingLevelSheetView is unchanged;
         // it's still presented from the nav-bar badge.
-        HStack(spacing: 0) {
-            Text("\(soulName) is thinking")
-            ForEach(0..<3, id: \.self) { i in
-                Text(".")
-                    .offset(y: dotOffsets[i] ? -3 : 1)
+        // One fixed-height line: update locally each second, without publishing
+        // every tick through the full message list or changing footer height.
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let elapsed = max(0, Int(context.date.timeIntervalSince(startedAt ?? appearedAt)))
+            HStack(spacing: 5) {
+                if retryCountdown > 0 {
+                    Text("连接重试 · \(retryCountdown)秒后重试")
+                } else {
+                    Text(phase ?? "等待模型响应")
+                    if elapsed >= 30,
+                       !(phase?.hasPrefix("已暂停") ?? false),
+                       phase != "模型正在思考" {
+                        Text("· 等待较久")
+                            .foregroundStyle(.orange)
+                    }
+                }
+                Text("\(elapsed)秒")
+                    .monospacedDigit()
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .soulMdChanged)) { _ in
-            let n = SoulStore.cachedMetadata.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            soulName = n.isEmpty ? "Minis" : n
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .accessibilityLabel("\(phase ?? "等待模型响应")，已等待\(elapsed)秒")
         }
         .font(.system(size: 15, weight: .medium))
         .foregroundStyle(ChatColors.tertiaryText)
         .padding(.top, 0)
-        .onAppear {
-            for i in 0..<3 {
-                withAnimation(
-                    .easeInOut(duration: 0.4)
-                        .repeatForever(autoreverses: true)
-                        .delay(Double(i) * 0.15)
-                ) {
-                    dotOffsets[i] = true
-                }
-            }
-        }
     }
 }
 

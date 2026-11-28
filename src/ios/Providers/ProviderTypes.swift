@@ -25,6 +25,29 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
     /// flows through OpenAIProvider like xAI/Kimi. Opt-in, warned about in the
     /// sign-in UI, and hideable via CopilotConstants.isEnabled.
     case githubCopilot
+    /// Tencent WorkBuddy China. OpenAI-compatible chat endpoint with WorkBuddy-specific headers.
+    case workBuddyChina
+    /// WorkBuddy AI, the international build. Same plugin login protocol and
+    /// the same chat shape as the China build, but a different host and client
+    /// fingerprint, and it rejects a conversation that does not start with a
+    /// system message.
+    case workBuddyAI
+    /// SenseTime Raccoon (商汤「小浣熊」). OpenAI-compatible gateway at
+    /// xiaohuanxiong.com, signed into with the desktop client's authorization
+    /// code flow. Opt-in and unofficial: the app is not affiliated with the
+    /// vendor and the flow can change without notice.
+    case raccoon
+    /// Zhipu AutoGLM desktop (AutoClaw). OpenAI-compatible chat behind a
+    /// gateway that fingerprints its own client: a different auth header, a
+    /// required system-prompt identity line and a `max_tokens` floor. All three
+    /// live in `AutoClawAPI` so the rest of the app sees a normal provider.
+    case autoClaw
+    /// Trae (字节跳动 IDE), both builds. OpenAI-shaped only in appearance: the
+    /// body carries Trae's own fields and the response is a custom event
+    /// stream, so it brings its own translator and body builder.
+    case trae
+    /// Trae international, with an explicit international sign-in site.
+    case traeInternational
     /// Sentinel for a provider type this app build doesn't recognize — e.g. a
     /// NEWER build synced an instance whose `provider_type` string isn't a known
     /// case here. We DECODE to this instead of throwing/dropping, so the instance
@@ -50,6 +73,12 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .xAI: return "xAI (Grok)"
         case .kimiCode: return "Kimi Code"
         case .githubCopilot: return "GitHub Copilot"
+        case .workBuddyChina: return "WorkBuddy 中国版"
+        case .workBuddyAI: return "WorkBuddy AI（国际版）"
+        case .raccoon: return "小浣熊（商汤）"
+        case .autoClaw: return "AutoClaw（智谱 AutoGLM）"
+        case .trae: return "Trae（字节跳动）"
+        case .traeInternational: return "Trae 国际版"
         case .unsupported: return "Unsupported"
         }
     }
@@ -77,6 +106,20 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         switch self {
         case .anthropic, .gemini, .antigravity, .openRouter, .xAI, .kimiCode, .githubCopilot:
             // These OAuth branches all reach a real /models endpoint.
+            return true
+        case .workBuddyChina, .workBuddyAI:
+            // Fetch the account-scoped catalog from the build's own /v3/config.
+            return true
+        case .raccoon:
+            // The account-scoped catalog at /model_catalog is the only source
+            // of usable model ids; nothing is compiled in.
+            return true
+        case .autoClaw:
+            // The gateway owns the model list; its entries also carry the route
+            // id (the billing channel) that requests must echo back.
+            return true
+        case .trae, .traeInternational:
+            // The directory's roster is the only list of callable models.
             return true
         case .openAI:
             // OpenAIModelsAPI.fetchModelsOAuth() is a compiled-in list.
@@ -106,6 +149,57 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         // (`model_picker_enabled`), never a compiled-in guess that would go
         // stale and offer models the account cannot use.
         case .githubCopilot: return []
+        // WorkBuddy's upstream catalog confirms "auto" as the default model.
+        // Keep this fallback intentionally minimal until account-scoped /v3/config
+        // discovery is implemented; don't advertise speculative model IDs.
+        case .workBuddyAI:
+            // Same minimal fallback as the China build: the account catalog is
+            // authoritative, and a compiled-in list would go stale.
+            return [
+                LLMModel(
+                    id: "default-model",
+                    displayName: "Default",
+                    provider: "WorkBuddy AI（国际版）",
+                    modalityOverride: .textOnly,
+                    contextWindow: 168_000,
+                    supportsReasoning: false
+                )
+            ]
+        case .workBuddyChina:
+            return [
+                LLMModel(
+                    id: "auto",
+                    displayName: "Auto",
+                    provider: "WorkBuddy 中国版",
+                    modalityOverride: .textOnly,
+                    contextWindow: 168_000,
+                    supportsReasoning: false
+                )
+            ]
+        case .raccoon:
+            // Deliberately empty, like Copilot: every usable id comes from the
+            // account's own /model_catalog, so a compiled-in list would only go
+            // stale or offer models the account cannot use.
+            return []
+        case .autoClaw:
+            // A tiny compiled-in fallback (the two models the gateway documents)
+            // so a brand-new install can still send a request before the first
+            // catalog refresh lands.
+            return AutoClawAPI.staticModels
+        case .trae, .traeInternational:
+            // One sane default so a fresh install can send a request before
+            // the first roster refresh lands. Every other id comes from the
+            // account's own directory.
+            return [
+                LLMModel(
+                    id: TraeAPI.defaultModel,
+                    displayName: "Auto",
+                    provider: self == .traeInternational ? "Trae 国际版" : "Trae",
+                    modalityOverride: .textOnly,
+                    contextWindow: 200_000,
+                    maxOutputTokens: 64_000
+                )
+            ]
         case .unsupported: return []
         }
     }
@@ -130,6 +224,18 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
             return AppLocalized("Sign in with your Kimi Code / Coding Plan subscription")
         case .githubCopilot:
             return AppLocalized("Sign in with GitHub — unofficial, use at your own risk")
+        case .workBuddyChina:
+            return "使用WorkBuddy 登录"
+        case .workBuddyAI:
+            return "使用 WorkBuddy AI 账号登录（国际版）"
+        case .raccoon:
+            return "使用小浣熊账号登录（非官方接口）"
+        case .autoClaw:
+            return "使用智谱账号登录（手机验证码，非官方接口）"
+        case .trae:
+            return "使用 Trae 账号登录（内置浏览器，非官方接口）"
+        case .traeInternational:
+            return "使用 Trae 国际版账号登录（内置浏览器，非官方接口）"
         case .antigravity:
             return AppLocalized("\(builtInModels.count) built-in models")
         case .unsupported:
@@ -149,6 +255,11 @@ enum ProviderType: String, Codable, CaseIterable, Hashable, Sendable {
         case .xAI: return .vision
         case .kimiCode: return .vision
         case .githubCopilot: return .vision
+        case .workBuddyChina: return .vision
+        case .workBuddyAI: return .vision
+        case .raccoon: return .vision
+        case .autoClaw: return .vision
+        case .trae, .traeInternational: return .textOnly
         case .unsupported: return .vision
         }
     }

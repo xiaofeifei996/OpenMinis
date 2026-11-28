@@ -1,0 +1,102 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Export speed-test diagnostics" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Export speed-test diagnostics" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "导出测速诊断" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "匯出測速診斷" } }
+      }
+    },
+    "Could not export speed-test diagnostics" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not export speed-test diagnostics" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法导出测速诊断" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "無法匯出測速診斷" } }
+      }
+    },
+    "Response latency: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Response latency: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "回复延迟：%@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "回覆延遲：%@" } }
+      }
+    },
+    "Timed out" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Timed out" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "超时" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "逾時" } }
+      }
+    },
+    "Speed test timed out; model availability is unknown" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Speed test timed out; model availability is unknown" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "测速超时，无法据此判断模型是否可用" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "測速逾時，無法據此判斷模型是否可用" } }
+      }
+    },
+    "First-token latency: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "First-token latency: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "首 token 延迟：%@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "首 token 延遲：%@" } }
+      }
+    },
+    "Latency test failed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Latency test failed" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "延迟测试失败" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "延遲測試失敗" } }
+      }
+    },
+    "Latency test queued" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Latency test queued" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "延迟测试排队中" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "延遲測試排隊中" } }
+      }
+    },
+    "Latency unmeasured" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Latency unmeasured" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "尚未测量延迟" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "尚未測量延遲" } }
+      }
+    },
+    "Rate limited" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Rate limited" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "当前限流" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "目前受到速率限制" } }
+      }
+    },
+    "Rate limited; last successful latency: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Rate limited; last successful latency: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "当前限流；上次成功延迟：%@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "目前受到速率限制；上次成功延遲：%@" } }
+      }
+    },
+    "Latency test running" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Latency test running" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "延迟测试运行中" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "延遲測試運行中" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

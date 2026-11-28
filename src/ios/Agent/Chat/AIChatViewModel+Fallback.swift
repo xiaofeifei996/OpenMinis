@@ -2,9 +2,155 @@ import Foundation
 
 private let logger = AppLogger(category: "AIChatVM")
 
+// BEGIN StreamOpenDeadline
+/// A single winner, including cancellation before continuation/task registration.
+/// Unstructured tasks are intentional: a provider may ignore cancellation, so
+/// returning a timeout must not join the losing request (as a task group would).
+private final class StreamOpenGate<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var finished = false
+    private var pendingResult: Result<Value, Error>?
+    private var continuation: CheckedContinuation<Value, Error>?
+    private var tasks: [Task<Void, Never>] = []
+
+    func register(_ continuation: CheckedContinuation<Value, Error>) {
+        lock.lock()
+        if let result = pendingResult {
+            pendingResult = nil
+            lock.unlock()
+            continuation.resume(with: result)
+        } else {
+            self.continuation = continuation
+            lock.unlock()
+        }
+    }
+
+    /// Register while holding the finish lock, before a new task can pass its
+    /// cancellation check. A cancelled gate must never launch another request.
+    func launch(_ operation: @escaping @Sendable () async -> Void) {
+        lock.lock()
+        guard !finished else { lock.unlock(); return }
+        let task = Task {
+            // Pair with registration: finish cannot miss this task handle.
+            let active = self.lock.withLock { !self.finished }
+            guard active, !Task.isCancelled else { return }
+            await operation()
+        }
+        tasks.append(task)
+        lock.unlock()
+    }
+
+    /// Late success is discarded here; its stream is never consumed by UI/tools.
+    @discardableResult
+    func finish(_ result: Result<Value, Error>) -> Bool {
+        lock.lock()
+        guard !finished else { lock.unlock(); return false }
+        finished = true
+        let continuation = self.continuation
+        self.continuation = nil
+        if continuation == nil { pendingResult = result }
+        let tasks = self.tasks
+        self.tasks.removeAll()
+        lock.unlock()
+        for task in tasks { task.cancel() }
+        continuation?.resume(with: result)
+        return true
+    }
+
+    static func open(
+        timeout: TimeInterval,
+        timeoutError: Error,
+        operation: @escaping @Sendable () async throws -> Value
+    ) async throws -> Value {
+        try Task.checkCancellation()
+        let gate = StreamOpenGate<Value>()
+        let value = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                gate.register(continuation)
+                gate.launch {
+                    do {
+                        try Task.checkCancellation()
+                        let value = try await operation()
+                        try Task.checkCancellation()
+                        gate.finish(.success(value))
+                    } catch {
+                        gate.finish(.failure(error))
+                    }
+                }
+                gate.launch {
+                    do {
+                        try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                        try Task.checkCancellation()
+                        gate.finish(.failure(timeoutError))
+                    } catch { /* cancellation means another outcome won */ }
+                }
+            }
+        } onCancel: {
+            gate.finish(.failure(CancellationError()))
+        }
+        // Cancellation may win immediately after success resumed the caller.
+        try Task.checkCancellation()
+        return value
+    }
+}
+// END StreamOpenDeadline
+
+/// Cancellation must bypass both retry ladders and the group's `always` path,
+/// including providers that wrap URLSession cancellation in an LLMError.
+private func checkStreamCancellation(_ error: Error) throws {
+    try Task.checkCancellation()
+    if error is CancellationError { throw CancellationError() }
+    if let llmError = error as? LLMError {
+        switch llmError {
+        case .cancelled: throw CancellationError()
+        case .networkError(let underlying), .decodingError(let underlying):
+            try checkStreamCancellation(underlying)
+        case .unknown(let underlying):
+            if let underlying { try checkStreamCancellation(underlying) }
+        default: break
+        }
+    }
+    let nsError = error as NSError
+    if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
+        throw CancellationError()
+    }
+}
+
 // MARK: - Auto-Retry + Group-Level Fallback
 
 extension AIChatViewModel {
+
+    /// Establishment can block before there is an AsyncThrowingStream for the
+    /// SSE watchdog to observe. Apply the same provider idle budget here too.
+    private func openAgentStream(
+        provider: any AgentProvider,
+        messages: [AgentMessage],
+        systemPrompt: String?,
+        tools: [AgentToolDefinition],
+        maxTokens: Int,
+        thinkingLevel: ThinkingLevel,
+        chatMessage: ChatMessage?
+    ) async throws -> AsyncThrowingStream<AgentStreamEvent, Error> {
+        try Task.checkCancellation()
+        chatMessage?.modelWaitStartedAt = Date()
+        chatMessage?.modelWaitPhase = "正在连接模型"
+        let timeout = provider.responseIdleTimeout
+        let stream = try await StreamOpenGate<AsyncThrowingStream<AgentStreamEvent, Error>>.open(
+            timeout: timeout,
+            timeoutError: LLMError.transientError(message: "No response from the server for \(Int(timeout)) seconds — opening the model stream timed out")
+        ) {
+            try Task.checkCancellation()
+            return try await provider.streamAgentMessage(
+                messages: messages, systemPrompt: systemPrompt, tools: tools,
+                maxTokens: maxTokens, thinkingLevel: thinkingLevel
+            )
+        }
+        try Task.checkCancellation()
+        // Preserve the request's start through consumption; UI clears it when
+        // real content arrives or the turn is cleaned up.
+        chatMessage?.modelWaitPhase = "等待模型返回内容"
+        return stream
+    }
 
     // MARK: - Auto-Retry on Network Errors
 
@@ -57,6 +203,7 @@ extension AIChatViewModel {
         var checkedEntryId = entryId
         let retryDelays = delays ?? Self.retryDelays
         for attempt in 0...retryDelays.count {
+            try Task.checkCancellation()
             if attempt > 0 {
                 // [T-stop-queued-cancel-error] A stopped turn must not start a
                 // countdown: the failure it would show is most likely the
@@ -124,23 +271,28 @@ extension AIChatViewModel {
                     logger.error("🔀ROUTE auto-retry: entry=\(checkedEntryId ?? "nil") \(String(describing: hit.problem)) instance=\(hit.identity.instanceId) — not sending")
                     throw LLMError.providerError(message: ProviderAvailabilityRules.message(hit.problem, identity: hit.identity))
                 }
-                let stream = try await currentProvider.streamAgentMessage(
+                let stream = try await openAgentStream(
+                    provider: currentProvider,
                     messages: messages,
                     systemPrompt: systemPrompt,
                     tools: tools,
                     maxTokens: maxTokens,
-                    thinkingLevel: thinkLvl
+                    thinkingLevel: thinkLvl,
+                    chatMessage: chatMessage
                 )
+                try Task.checkCancellation()
                 if attempt > 0 {
                     RetryLogStore.shared.resolvePending(key: retryLogKey, outcome: .succeeded, kind: .autoRetry)
                 }
                 self.autoRetryAttempt = 0
                 return stream
             } catch let error as LLMError where error.isRetryable {
+                try checkStreamCancellation(error)
                 lastError = error
                 continue
             } catch {
                 self.autoRetryAttempt = 0
+                try checkStreamCancellation(error)
                 if attempt > 0 {
                     RetryLogStore.shared.resolvePending(key: retryLogKey, outcome: .failed, kind: .autoRetry)
                 }
@@ -211,6 +363,7 @@ extension AIChatViewModel {
         }
 
         while true {
+            try Task.checkCancellation()
             // [T-provider-live-check] Before EVERY request: is the provider
             // instance this request would go to still there, and enabled?
             //
@@ -297,13 +450,16 @@ extension AIChatViewModel {
                 if let eid = currentEntryId, let entry = ProviderConfigStore.shared.entry(for: eid) {
                     thinkLvl = min(thinkLvl, entry.effectiveMaxThinkingLevel)
                 }
-                let stream = try await currentProvider.streamAgentMessage(
+                let stream = try await openAgentStream(
+                    provider: currentProvider,
                     messages: messages,
                     systemPrompt: currentSystemPrompt,
                     tools: tools,
                     maxTokens: maxTok,
-                    thinkingLevel: thinkLvl
+                    thinkingLevel: thinkLvl,
+                    chatMessage: chatMessage
                 )
+                try Task.checkCancellation()
                 // Success — update binding if we fell back to a different entry
                 let prevEntryId = activeEntryId
                 if currentEntryId != activeEntryId, let currentEntryId,
@@ -342,6 +498,7 @@ extension AIChatViewModel {
                 }
                 return stream
             } catch let error as LLMError where error.isFallbackable {
+                try checkStreamCancellation(error)
                 // Provider-level error (rate limit, invalid key, provider rejection):
                 // immediately try next model in group without retry countdown.
                 logger.error("🔀ROUTE entry=\(currentEntryId ?? "nil") fallbackable error: \(error.localizedDescription)")
@@ -388,6 +545,7 @@ extension AIChatViewModel {
                 currentSystemPrompt = rebuiltPrompt
                 // continue loop — will try next entry immediately
             } catch {
+                try checkStreamCancellation(error)
                 // Check if group uses "always" fallback strategy — if so, treat all
                 // errors as immediately fallbackable (skip auto-retry on current model).
                 let groupFallbackStrategy = activeGroupId
@@ -469,6 +627,7 @@ extension AIChatViewModel {
                         delays: retryDelaysFor(error: error, hasGroup: hasFallbackTarget),
                         entryId: currentEntryId
                     )
+                    try Task.checkCancellation()
                     // Auto-retry succeeded
                     let prevEntryId = activeEntryId
                     if currentEntryId != activeEntryId, let currentEntryId,
@@ -491,6 +650,7 @@ extension AIChatViewModel {
                     }
                     return stream
                 } catch {
+                    try checkStreamCancellation(error)
                     // Auto-retry exhausted — attempt group fallback
                     logger.error("🔀ROUTE auto-retry exhausted for entry=\(currentEntryId ?? "nil"), attempting group fallback")
                     if let eid = currentEntryId, let entry = ProviderConfigStore.shared.entry(for: eid) {
@@ -561,13 +721,31 @@ extension AIChatViewModel {
     ) async throws -> StreamResult {
         // Track entries we've gotten empty responses from to avoid infinite loops.
         var emptyResponseEntries: Set<String> = []
+        var requestProvider = provider
+        var requestEntryId = activeEntryId
+        var requestSystemPrompt = systemPrompt
 
         while true {
+            try Task.checkCancellation()
+            if requestEntryId != activeEntryId, let eid = activeEntryId,
+               let entry = ProviderConfigStore.shared.entry(for: eid) {
+                requestProvider = await makeAgentProvider(for: entry)
+                try Task.checkCancellation()
+                requestEntryId = eid
+                var rebuiltPrompt = baseSystemPrompt
+                if let fragment = entry.model.capabilityPromptFragment {
+                    rebuiltPrompt += "\n\n" + fragment
+                }
+                if let fragment = entry.model.agentBehaviorPromptFragment {
+                    rebuiltPrompt += "\n\n" + fragment
+                }
+                requestSystemPrompt = rebuiltPrompt
+            }
             let fbStream = try await streamWithGroupFallback(
-                provider: provider,
+                provider: requestProvider,
                 messages: messages,
                 baseSystemPrompt: baseSystemPrompt,
-                systemPrompt: systemPrompt,
+                systemPrompt: requestSystemPrompt,
                 tools: tools,
                 model: model,
                 lastContextTokens: lastContextTokens,
@@ -575,10 +753,17 @@ extension AIChatViewModel {
                 activeGroupId: &activeGroupId,
                 activeEntryId: &activeEntryId
             )
+            try Task.checkCancellation()
+            var streamProvider = requestProvider
+            if requestEntryId != activeEntryId, let eid = activeEntryId,
+               let entry = ProviderConfigStore.shared.entry(for: eid) {
+                streamProvider = await makeAgentProvider(for: entry)
+                try Task.checkCancellation()
+            }
             let result = try await processStreamEvents(
                 stream: fbStream,
                 msgIdx: msgIdx,
-                provider: provider
+                provider: streamProvider
             )
 
             // Empty-response detection: HTTP 200 + stream finished, but no text,

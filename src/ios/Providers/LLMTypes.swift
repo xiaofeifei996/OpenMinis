@@ -843,6 +843,32 @@ struct LLMModel: Equatable, Hashable, Identifiable, Sendable, Codable {
             supportedModalities: ProviderType.githubCopilot.defaultModality,
             supportedAuth: [.oauth]
         ),
+        // SenseTime Raccoon (小浣熊). Same reasoning as the three above: its
+        // models are served by an OpenAI-compatible gateway and accept images,
+        // but the provider string is this app's own label, so without a row the
+        // lookup MISSES and every model silently reads as text-only.
+        "小浣熊": ModelCapabilities(
+            supportedModalities: ProviderType.raccoon.defaultModality,
+            supportedAuth: [.oauth]
+        ),
+        // AutoClaw (智谱 AutoGLM). Same reason: a provider string this app owns,
+        // so without a row the lookup MISSES and every model reads as text-only.
+        "AutoClaw": ModelCapabilities(
+            supportedModalities: ProviderType.autoClaw.defaultModality,
+            supportedAuth: [.oauth]
+        ),
+        // Trae (字节跳动). Its models are text-only on this wire — the body
+        // carries no image blocks — so the row uses the type's own answer.
+        // WorkBuddy AI（国际版）. Same reason as its China twin: a provider
+        // string this app owns, so a missing row reads as text-only.
+        "WorkBuddy AI（国际版）": ModelCapabilities(
+            supportedModalities: ProviderType.workBuddyAI.defaultModality,
+            supportedAuth: [.oauth]
+        ),
+        "Trae": ModelCapabilities(
+            supportedModalities: ProviderType.trae.defaultModality,
+            supportedAuth: [.oauth]
+        ),
     ]
 
     /// Default capabilities when the provider is unknown.

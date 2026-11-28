@@ -130,6 +130,15 @@ enum PastePlaceholder {
 
 extension AIChatViewModel {
 
+    /// Escape shared attachment metadata before inserting it into XML attributes.
+    static func escapedAttachmentAttribute(_ value: String) -> String {
+        value.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+    }
+
+
     /// Stash a long pasted text and return the placeholder literal to insert
     /// at the caret.
     ///
@@ -775,7 +784,7 @@ extension AIChatViewModel {
         if !metas.isEmpty {
             var xml = "<user-attached-files>\n"
             for meta in metas {
-                xml += "  <file path=\"\(meta.path)\" url=\"\(meta.minisURL)\" size=\"\(meta.size)\" modified=\"\(nowStr)\" />\n"
+                xml += "  <file path=\"\(Self.escapedAttachmentAttribute(meta.path))\" url=\"\(Self.escapedAttachmentAttribute(meta.minisURL))\" size=\"\(meta.size)\" modified=\"\(nowStr)\" />\n"
             }
             xml += "</user-attached-files>"
             parts.append(.text(xml))

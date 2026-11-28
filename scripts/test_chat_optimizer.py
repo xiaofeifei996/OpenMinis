@@ -121,7 +121,7 @@ def main() -> int:
         ("rate-limit badge overrides cached latency", "if isRateLimited {"),
         ("queued retry visibly retains throttle status", "latencyState.enqueue(id: id, error: error)"),
         ("other providers keep going", "return now >= until"),
-        ("a throttled row is retried once", "queue.append(original)"),
+        ("a throttled row is retried before queued siblings", "queue.insert(original, at: 0)"),
         ("stale throttle errors are cleared before deciding", "cleared \\(staleThrottle.count) stale throttle error"),
         ("manual test uses bounded concurrency", "concurrency: Int = 6"),
         ("each account has its provider-specific concurrency limit", "let accountLimit = min(self.latencyPolicy(for: entry).accountLimit, globalLimit)"),

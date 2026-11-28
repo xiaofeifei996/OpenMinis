@@ -963,8 +963,11 @@ final class ChatOptimizer {
                         blockedUntil[providerId] = Date().addingTimeInterval(throttleCooldown)
                         ModelLatencyDiagnostics.shared.record("account-cooldown", account: providerId,
                             delayMs: throttleCooldown * 1000)
+                        // Pause this account and retry the model that actually
+                        // received 429 before probing its queued siblings. Putting
+                        // it at the front avoids one full cooldown per model.
                         retried.insert(id)
-                        queue.append(original)
+                        queue.insert(original, at: 0)
                         queuedForRetry = true
                     } else {
                         exhaustedAccounts.insert(providerId)

@@ -80,6 +80,7 @@ checks = {
     'submitted Today throttle cannot retry a generation; safe account cooldown remains':
         'retryAllowed: !TodayProvider.generationMayHaveBeenSubmitted(error)' in source
         and 'if probe.retryAllowed, !exhaustedAccounts.contains(providerId)' in source
+        and 'queue.insert(original, at: 0)' in source
         and today.index('submitted = true') < today.index('let sent: TodaySendResponse')
         and 'guard !(method == "POST" && path == "/v1/messages")' in today,
     'Today client gate covers selection, POST, poll and cancellation across clients':
@@ -584,6 +585,8 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         assert(throttled.speedTestStatus.running)
         await throttleRun.value
         assert(throttled.maxAccount <= 1 && throttled.starts.values.allSatisfy { $0 <= 2 })
+        assert(throttled.starts["bad0"] == 2)
+        assert((1..<6).allSatisfy { throttled.starts["bad\($0)"] == nil })
         assert(throttled.latencyState.cache.errors["bad0"] == "Rate limited")
         assert((1..<6).allSatisfy { throttled.latencyState.cache.errors["bad\($0)"] == "Rate limited" })
         assert(throttled.latencyState.cache.errors["safeToday0"] == "Rate limited")

@@ -83,8 +83,11 @@ checks = {
         and picker.index('else if state.result.isTimeout') < picker.index('} else if failed {')
         and 'error == "first-token timeout"' in source
         and 'Speed test timed out; model availability is unknown' in picker,
-    'only nonempty successful text Quick Tests clear errors; Today also publishes duration':
+    'only nonempty text Quick Tests clear errors; measured duration writes for all providers':
         'if case .text(let text) = state, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty' in quick
+        and 'let measuredElapsed = elapsed.map { $0.isFinite && $0 > 0 } == true' in quick_success
+        and 'latencyState.cache.entries[id] = elapsed' in quick_success
+        and 'Any successful Quick Test duration is immediately' in quick
         and 'recordSuccessfulTextQuickTest(\n                            entry: entry, elapsed: run.elapsed)' in quick
         and 'func recordSuccessfulTextQuickTest(entry: ModelEntry, elapsed: TimeInterval? = nil)' in source
         and 'validationAtStart[id] == textValidationRevisions[id, default: 0]' in source,
@@ -491,10 +494,21 @@ func entries(_ count: Int, accounts: Int = 4) -> [ModelEntry] {
         let liveTodayDurable = try JSONDecoder().decode(ModelLatencyCache.self,
             from: liveToday.userDefaults.data(forKey: ChatOptimizerSettings.latencyCacheKey)!)
         assert(liveTodayDurable.entries[liveTodayEntry.id] == 4.0)
+        let liveOrdinary = ChatOptimizer()
+        let liveOrdinaryEntry = ModelEntry(id: "glm-flash", providerInstanceId: "glm-instance")
+        liveOrdinary.catalog = [liveOrdinaryEntry]
+        liveOrdinary.latencyState.cache.entries[liveOrdinaryEntry.id] = 3.0
+        let liveOrdinaryLeaf = liveOrdinary.latencyState.entry(id: liveOrdinaryEntry.id)
+        liveOrdinary.recordSuccessfulTextQuickTest(entry: liveOrdinaryEntry, elapsed: 4.0)
+        assert(liveOrdinaryLeaf.result.seconds == 4.0)
+        assert(liveOrdinary.latencyState.cache.entries[liveOrdinaryEntry.id] == 4.0)
+        let liveOrdinaryDurable = try JSONDecoder().decode(ModelLatencyCache.self,
+            from: liveOrdinary.userDefaults.data(forKey: ChatOptimizerSettings.latencyCacheKey)!)
+        assert(liveOrdinaryDurable.entries[liveOrdinaryEntry.id] == 4.0)
         print("PASS: Quick Test publishes completed latency to the live row and durable cache for all providers")
 
         // A successful TEXT smoke test clears only this entry's old failure.
-        // It must not turn Quick Test's full-response duration into a TTFT rank.
+        // Without a measured duration, it preserves any existing probe value.
         let verified = ChatOptimizer()
         let verifiedEntry = ModelEntry(id: "verified", providerInstanceId: "today")
         verified.catalog = [verifiedEntry]
